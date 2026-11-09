@@ -1,13 +1,13 @@
 // ==WindhawkMod==
 // @id              dynamic-island-taskbar
 // @name            Dynamic Island na Barra de Tarefas
-// @description     Dynamic Island docked inside the Windows 11 taskbar: media controls on the collapsed pill, alerts that open to the right, follows the taskbar. Fork of Dynamic Island for Windows 1.4.0.
-// @version         1.0.0
+// @description     Dynamic Island docked inside the Windows 11 taskbar: media controls on the collapsed pill, alerts that open to the right, follows the taskbar, mouse/headset battery tab and low battery alert, settings in Brazilian Portuguese. Fork of Dynamic Island for Windows 1.4.0.
+// @version         1.1.0
 // @author          Tiago Palhas (fork of Dynamic Island for Windows by devcode90)
 // @github          https://github.com/TiagoPalhas
 // @homepage        https://github.com/TiagoPalhas/dynamic-island-taskbar
 // @include         windhawk.exe
-// @compilerOptions -lole32 -loleaut32 -lshcore -ld2d1 -ldwrite -ldwmapi -lgdi32 -luser32 -lshell32 -lruntimeobject -lwindowscodecs -lsetupapi -lwinhttp -lpdh -lwinmm
+// @compilerOptions -lole32 -loleaut32 -lshcore -ld2d1 -ldwrite -ldwmapi -lgdi32 -luser32 -lshell32 -lruntimeobject -lwindowscodecs -lsetupapi -lwinhttp -lpdh -lwinmm -lws2_32 -lbthprops
 // @license         MIT
 // ==/WindhawkMod==
 
@@ -32,6 +32,12 @@ What this fork changes:
   words such as "Desligado".
 - Defaults set for the taskbar: Bottom Left, size 0.8x, click to expand, Do Not
   Disturb alert off.
+- Battery tab (1.1.0) in the scroll loop for a BK-R1X 2.4 GHz mouse (vendor HID
+  command) and a QCY H3 headset (read over its own RFCOMM link, so it works with
+  Hands-Free turned off). Both devices are fixed in the source.
+- Low battery alert (1.1.0) for those two devices, with a configurable threshold
+  and number of soft red pulses.
+- Settings translated to Brazilian Portuguese (1.1.0).
 
 Runs on its own: it does not need the original Dynamic Island for Windows mod.
 Turn the original off if it is installed, or two islands will show.
@@ -143,67 +149,67 @@ We love community contributions! To ensure high-quality updates, please follow t
 /*
 - Appearance:
   - Position: bottom-left
-    $name: Position
-    $description: Where the island should appear on your screen.
+    $name: Posição
+    $description: Onde a ilha aparece na tela.
     $options:
-      - top-center: Top Center
-      - top-left: Top Left
-      - top-right: Top Right
-      - bottom-center: Bottom Center
-      - bottom-left: Bottom Left
-      - bottom-right: Bottom Right
+      - top-center: Centro superior
+      - top-left: Superior esquerdo
+      - top-right: Superior direito
+      - bottom-center: Centro inferior
+      - bottom-left: Inferior esquerdo
+      - bottom-right: Inferior direito
   - TargetMonitor: primary
-    $name: Target Monitor
-    $description: Select the screen to display the island. If a display isn't found, it safely falls back to the Primary Monitor.(Extra Displays are given even if they don't exist because windhawk settings are static)
+    $name: Monitor
+    $description: Escolha a tela em que a ilha aparece. Se o monitor não for encontrado, ela volta para o monitor principal. (Os monitores extras aparecem na lista mesmo que não existam, porque as configurações do Windhawk são fixas.)
     $options:
-      - 'primary': Primary Monitor
-      - '1': Display 1
-      - '2': Display 2
-      - '3': Display 3
-      - '4': Display 4
-      - '5': Display 5
-      - 'follow': Follow Mouse (Active Monitor)
+      - 'primary': Monitor principal
+      - '1': Monitor 1
+      - '2': Monitor 2
+      - '3': Monitor 3
+      - '4': Monitor 4
+      - '5': Monitor 5
+      - 'follow': Seguir o mouse (monitor ativo)
   - OffsetX: 0
-    $name: Offset X
-    $description: Adjust the horizontal position (in pixels). Positive values move it right, negative values move it left.
+    $name: Deslocamento X
+    $description: Ajusta a posição horizontal (em pixels). Valores positivos movem para a direita, negativos para a esquerda.
   - OffsetY: 0
-    $name: Offset Y
-    $description: Adjust the vertical position (in pixels). Positive values move it down, negative values move it up. Applies to every state unless the separate expanded offset below is turned on, in which case this becomes the collapsed/idle offset.
+    $name: Deslocamento Y
+    $description: Ajusta a posição vertical (em pixels). Valores positivos movem para baixo, negativos para cima. Vale para todos os estados, a menos que o deslocamento separado para a ilha expandida (abaixo) esteja ligado; nesse caso este passa a ser o deslocamento da ilha recolhida/ociosa.
   - SeparateExpandedOffsetY: false
-    $name: Use a separate Offset Y when expanded
-    $description: Lets the island sit at one height while collapsed and a different one while expanded. Useful for tucking the idle pill up near the screen edge while keeping the expanded dashboard somewhere comfortable to interact with.
+    $name: Usar outro deslocamento Y quando expandida
+    $description: Deixa a ilha em uma altura quando recolhida e em outra quando expandida. Útil para encostar a pílula ociosa na borda da tela e manter o painel expandido num lugar confortável de usar.
   - OffsetYExpanded: 0
-    $name: Offset Y (expanded)
-    $description: Vertical position in pixels while the island is expanded. Only used when the separate expanded offset above is on. The island eases between this and Offset Y as it expands and collapses, so the two never snap.
+    $name: Deslocamento Y (expandida)
+    $description: Posição vertical em pixels enquanto a ilha está expandida. Só é usado quando o deslocamento separado acima está ligado. A ilha transita suavemente entre este valor e o Deslocamento Y ao expandir e recolher, sem saltos.
   - BorderMergedMode: false
-    $name: Border-Merged Mode
-    $description: Attach the island flush to the top edge of the monitor without a floating gap.
+    $name: Modo colado na borda
+    $description: Encosta a ilha na borda superior do monitor, sem espaço flutuante.
   - ShapeStyle: default
-    $name: Island Shape Style
-    $description: Change the overall shape of the island (Pill, Windows 11, or macOS Notch).
+    $name: Formato da ilha
+    $description: Muda o formato geral da ilha (pílula, Windows 11 ou notch do macOS).
     $options:
-      - default: Default (Apple Pill)
-      - w11: Windows 11 (Rounded Box)
-      - notch: macOS Notch (Top Edge Flush)
+      - default: Padrão (pílula da Apple)
+      - w11: Windows 11 (caixa arredondada)
+      - notch: Notch do macOS (colado no topo)
   - ProgressStyle: slim
-    $name: Progress bar style
-    $description: Look of the song progress bar in the expanded media player. Wavy and Squiggle animate while music is playing and flatten when paused.
+    $name: Estilo da barra de progresso
+    $description: Aparência da barra de progresso da música no player expandido. Ondulada e Rabisco se movem enquanto a música toca e ficam retas quando pausada.
     $options:
-      - slim: Slim (classic bar)
-      - wavy: Wavy
-      - squiggle: Squiggle (slower, subtler wave)
-      - bar: Bar (thick bar with a line thumb)
+      - slim: Fina (barra clássica)
+      - wavy: Ondulada
+      - squiggle: Rabisco (onda mais lenta e sutil)
+      - bar: Barra (barra grossa com marcador em linha)
   - SpectrumStyle: bars
-    $name: Audio spectrum style
-    $description: Look of the live audio visualizer next to the album art (collapsed pill and expanded player). Pulse Orb, Plasma Thread and Peak Matrix use a real frequency analysis of the system audio, and each plays its own animation when the track changes.
+    $name: Estilo do espectro de áudio
+    $description: Aparência do visualizador de áudio ao lado da capa do álbum (pílula recolhida e player expandido). Orbe pulsante, Fio de plasma e Matriz de picos usam uma análise de frequência real do áudio do sistema, e cada um tem sua própria animação quando a faixa muda.
     $options:
-      - bars: Classic Bars
-      - led: Peak Matrix
-      - plasma: Plasma Thread
-      - orb: Pulse Orb
+      - bars: Barras clássicas
+      - led: Matriz de picos
+      - plasma: Fio de plasma
+      - orb: Orbe pulsante
   - SizeScale: '0.8'
-    $name: Size scale
-    $description: Makes the entire island and its contents larger or smaller.
+    $name: Escala de tamanho
+    $description: Aumenta ou diminui a ilha inteira e o seu conteúdo.
     $options:
       - '0.8': 0.8x
       - '1.0': 1.0x
@@ -213,356 +219,362 @@ We love community contributions! To ensure high-quality updates, please follow t
       - '2.0': 2.0x
       - '2.5': 2.5x
   - AutoDpiScale: true
-    $name: Auto DPI scaling
-    $description: Automatically scales the island to match your monitor's DPI. Recommended for 4K screens.
-  $name: Appearance & Position
+    $name: Escala automática de DPI
+    $description: Ajusta a ilha automaticamente ao DPI do monitor. Recomendado para telas 4K.
+  $name: Aparência e posição
 - Behavior:
   - AlwaysOnTop: true
-    $name: Always on top
-    $description: Keeps the island above all other windows. Turn this off if it blocks other apps.
+    $name: Sempre no topo
+    $description: Mantém a ilha acima de todas as outras janelas. Desligue se ela atrapalhar outros apps.
   - ExpandOnHover: false
-    $name: Expand on hover
-    $description: Expand the island automatically when hovered. If disabled, click to expand.
+    $name: Expandir ao passar o mouse
+    $description: Expande a ilha automaticamente ao passar o mouse por cima. Se desligado, clique para expandir.
   - AutoHideIdleSeconds: '0'
-    $name: Auto-hide island (all states)
-    $description: Hide the island (including idle, media, and other states) after this many seconds of inactivity. 0 to disable.
+    $name: Ocultar a ilha automaticamente (todos os estados)
+    $description: Oculta a ilha (incluindo os estados ocioso, mídia e outros) depois desse número de segundos sem atividade. 0 desativa.
     $options:
-      - '-1': Hide instantly
-      - '0': Never hide (default)
-      - '5': Hide after 5 seconds
-      - '10': Hide after 10 seconds
-      - '30': Hide after 30 seconds
-      - '60': Hide after 60 seconds
+      - '-1': Ocultar na hora
+      - '0': Nunca ocultar (padrão)
+      - '5': Ocultar após 5 segundos
+      - '10': Ocultar após 10 segundos
+      - '30': Ocultar após 30 segundos
+      - '60': Ocultar após 60 segundos
   - AutoHideFullscreen: true
-    $name: Hide on full screen
-    $description: Automatically hide the island when playing a video or app in full screen mode.
+    $name: Ocultar em tela cheia
+    $description: Oculta a ilha automaticamente quando um vídeo ou app está em tela cheia.
   - UnhideOnHover: true
-    $name: Unhide on hover
-    $description: Allow the hidden island to reappear when you hover your mouse over it.
-  $name: Behavior & Visibility
+    $name: Reexibir ao passar o mouse
+    $description: Permite que a ilha oculta reapareça quando você passa o mouse sobre ela.
+  $name: Comportamento e visibilidade
 - Animations:
   - TargetFPS: auto
-    $name: Refresh rate / FPS
-    $description: Set the animation frame rate. Choose Auto to dynamically match your active monitor's refresh rate (up to 360Hz/500Hz), or select a fixed FPS.
+    $name: Taxa de atualização / FPS
+    $description: Define a taxa de quadros das animações. Automático acompanha a taxa de atualização do monitor ativo (até 360 Hz/500 Hz); ou escolha um FPS fixo.
     $options:
-      - auto: Auto (Match Monitor Refresh Rate)
-      - '60': 60 FPS (Eco / Standard)
+      - auto: Automático (igual ao monitor)
+      - '60': 60 FPS (econômico / padrão)
       - '90': 90 FPS
       - '120': 120 FPS
       - '144': 144 FPS
       - '165': 165 FPS
       - '240': 240 FPS
-      - '360': 360 FPS (Ultra Smooth)
-      - '500': 500 FPS (Maximum / Uncapped)
+      - '360': 360 FPS (ultra suave)
+      - '500': 500 FPS (máximo / sem limite)
   - AnimationStyle: default
-    $name: Animation bounciness / style
-    $description: Control the spring physics and feel of the animation.
+    $name: Elasticidade / estilo da animação
+    $description: Controla a física de mola e a sensação da animação.
     $options:
-      - smooth: Smooth (No bounciness / Critically damped)
-      - default: Default (Balanced Apple-like spring)
-      - bouncy: Bouncy (Dynamic elastic spring)
-      - snappy: Snappy (High stiffness, quick settle)
+      - smooth: Suave (sem quique / amortecimento crítico)
+      - default: Padrão (mola equilibrada, estilo Apple)
+      - bouncy: Saltitante (mola elástica dinâmica)
+      - snappy: Ágil (mola firme, assenta rápido)
   - AnimationSpeed: normal
-    $name: Animation speed
-    $description: How fast the island expands and collapses.
+    $name: Velocidade da animação
+    $description: A rapidez com que a ilha expande e recolhe.
     $options:
-      - very-slow: Very Slow (0.5x)
-      - slow: Slow (0.75x)
+      - very-slow: Muito lenta (0.5x)
+      - slow: Lenta (0.75x)
       - normal: Normal (1.0x)
-      - fast: Fast (1.35x)
-      - very-fast: Very Fast (1.65x)
-      - ultra-fast: Ultra Fast (2.0x)
+      - fast: Rápida (1.35x)
+      - very-fast: Muito rápida (1.65x)
+      - ultra-fast: Ultrarrápida (2.0x)
   - ExpandedMediaTransitions: false
-    $name: Expanded player transitions
-    $description: Animate the hover player when the song changes or you press a control - title, artist and album text, the cover flip, and the previous / next / play-pause buttons. Turn off to make them change instantly.
+    $name: Transições do player expandido
+    $description: Anima o player de hover quando a música muda ou você aperta um controle (título, artista e álbum, a virada da capa e os botões anterior / próxima / tocar-pausar). Desligue para trocar tudo na hora.
   - PillCoverSpin: false
-    $name: Pill cover spin
-    $description: Spin the album cover in the collapsed pill when the song changes. Turn off to swap the cover instantly.
-  $name: Animations & Performance
+    $name: Girar a capa na pílula
+    $description: Gira a capa do álbum na pílula recolhida quando a música muda. Desligue para trocar a capa na hora.
+  $name: Animações e desempenho
 - Themes:
   - ThemePreset: obsidian
-    $name: Theme preset
-    $description: Select a curated color theme, or choose Custom to use your own hex colors below.
+    $name: Tema
+    $description: Escolha um tema de cores pronto, ou Personalizado para usar suas próprias cores hex abaixo.
     $options:
-      - obsidian: Obsidian - true black (Default)
-      - graphite: Graphite - neutral Windows 11 dark
-      - slate: Slate - cool blue-grey
-      - nord: Nord - the Nord palette
-      - evergreen: Evergreen - deep green
-      - espresso: Espresso - warm brown
-      - plum: Plum - muted mauve
-      - porcelain: Porcelain - light theme
-      - custom: Custom Colors (Use Hex Below)
+      - obsidian: Obsidian - preto puro (padrão)
+      - graphite: Graphite - escuro neutro do Windows 11
+      - slate: Slate - cinza-azulado frio
+      - nord: Nord - a paleta Nord
+      - evergreen: Evergreen - verde profundo
+      - espresso: Espresso - marrom quente
+      - plum: Plum - malva suave
+      - porcelain: Porcelain - tema claro
+      - custom: Cores personalizadas (usar hex abaixo)
   - PillOpacity: 96
-    $name: Pill transparency
-    $description: 35 to 100. Lower values make the island more see-through.
+    $name: Transparência da pílula
+    $description: 35 a 100. Valores menores deixam a ilha mais transparente.
   - TintIntensity: 72
-    $name: Background tint intensity
-    $description: 0 to 100. Controls how dark the background tint behind the island is.
+    $name: Intensidade do tom de fundo
+    $description: 0 a 100. Controla o quanto o tom de fundo atrás da ilha é escuro.
   - BackdropMaterial: none
-    $name: Backdrop material (real Windows blur)
-    $description: Paints genuine Windows blur or acrylic behind the island so your desktop and windows show through it, using the same effect the system uses for its own surfaces. Acrylic adds Windows' frosted grain and a tint of your background colour (see Acrylic tint strength). Requires Windows 10 1803 or newer, and Windows' Transparency effects must be turned ON (Settings > Personalization > Colors > Transparency effects, or on Windows 11 also Settings > Accessibility > Visual effects). If it is off, or Battery saver is on, you will only see a flat tint with no blur. When this is on, use Backdrop fill opacity below to control how much of the blur comes through.
+    $name: Material de fundo (desfoque real do Windows)
+    $description: Pinta o desfoque ou acrílico de verdade do Windows atrás da ilha, deixando a área de trabalho e as janelas aparecerem através dela, com o mesmo efeito que o sistema usa nas próprias superfícies. O acrílico adiciona a granulação fosca do Windows e um tom da sua cor de fundo (veja Força do tom acrílico). Requer Windows 10 1803 ou mais novo, e os Efeitos de transparência do Windows precisam estar LIGADOS (Configurações > Personalização > Cores > Efeitos de transparência, ou no Windows 11 também Configurações > Acessibilidade > Efeitos visuais). Se estiverem desligados, ou se a Economia de bateria estiver ativa, você verá só um tom chapado sem desfoque. Com isso ligado, use a Opacidade do preenchimento do fundo abaixo para controlar quanto do desfoque aparece.
     $options:
-      - none: Off (solid background)
-      - blur: Blur
-      - acrylic: Acrylic (frosted)
+      - none: Desligado (fundo sólido)
+      - blur: Desfoque
+      - acrylic: Acrílico (fosco)
   - BackdropFillOpacity: 45
-    $name: Backdrop fill opacity
-    $description: 0 to 100. Only used when a Backdrop material is enabled. How opaque the island's own background stays on top of the blur - lower values let more of the blurred desktop through. Has no effect when the backdrop is Off.
+    $name: Opacidade do preenchimento do fundo
+    $description: 0 a 100. Só é usado quando um material de fundo está ativo. O quanto o fundo próprio da ilha fica opaco por cima do desfoque; valores menores deixam passar mais da área de trabalho desfocada. Não tem efeito com o material de fundo desligado.
   - BackdropTint: 55
-    $name: Acrylic tint strength
-    $description: 0 to 100. How strongly your background colour tints the backdrop. Acrylic uses the full strength; Blur uses a lighter wash of the same colour so the desktop stays readable.
+    $name: Força do tom acrílico
+    $description: 0 a 100. O quanto a sua cor de fundo tinge o material de fundo. O acrílico usa a força total; o desfoque usa uma camada mais leve da mesma cor para a área de trabalho continuar legível.
   - MaterialDepth: true
-    $name: Depth shading
-    $description: Adds soft downward shading and the accent wash so the island has depth instead of looking like one flat fill. No edge highlights or rim lighting are involved. Turn off for a completely flat look.
+    $name: Sombreamento de profundidade
+    $description: Adiciona um sombreamento suave para baixo e o brilho da cor de destaque, dando profundidade à ilha em vez de um preenchimento chapado. Não há realces de borda nem iluminação de contorno. Desligue para um visual totalmente plano.
   - DropShadow: true
-    $name: Soft drop shadow
-    $description: Casts a soft shadow beneath the island to lift it off the desktop.
+    $name: Sombra suave
+    $description: Projeta uma sombra suave sob a ilha para destacá-la da área de trabalho.
   - AccentBloom: 100
-    $name: Accent bloom intensity
-    $description: 0 to 200. Strength of the soft accent-coloured wash bleeding in from the top of the island. Driven by album art when the accent mode is Auto. Set to 0 to remove it.
+    $name: Intensidade do brilho de destaque
+    $description: 0 a 200. Força do brilho suave na cor de destaque que vem do topo da ilha. Segue a capa do álbum quando o modo de cor de destaque está em Automático. Use 0 para remover.
   - TextScale: 100
-    $name: Text size
-    $description: 70 to 160. Scales all island text independently of the overall Size scale, so you can keep the island compact while making the clock and labels easier to read.
+    $name: Tamanho do texto
+    $description: 70 a 160. Muda o tamanho de todo o texto da ilha sem mexer na escala geral, para manter a ilha compacta com o relógio e os rótulos mais fáceis de ler.
   - AccentColorMode: auto
-    $name: Accent color mode
-    $description: How the glowing accent color is chosen. Auto extracts it from album art.
+    $name: Modo da cor de destaque
+    $description: Como a cor de destaque é escolhida. Automático extrai a cor da capa do álbum.
     $options:
-      - auto: Auto, from album art
-      - system: System (Device Accent)
-      - custom: Custom hex
+      - auto: Automático, pela capa do álbum
+      - system: Sistema (cor de destaque do Windows)
+      - custom: Hex personalizado
   - CustomAccentHex: "#4cc9f0"
-    $name: Custom accent hex
-    $description: The hex color to use when the accent mode is set to Custom.
+    $name: Hex da cor de destaque personalizada
+    $description: A cor hex usada quando o modo de destaque está em Personalizado.
   - CalendarAccent: red
-    $name: Calendar accent color
-    $description: Accent color for the calendar's month name and today's marker. Default uses the island's accent color mode; System always uses the Windows accent.
+    $name: Cor de destaque do calendário
+    $description: Cor de destaque do nome do mês e da marcação de hoje no calendário. Padrão usa o modo de cor de destaque da ilha; Sistema usa sempre a cor de destaque do Windows.
     $options:
-      - red: Default (Island accent)
-      - system: System (Device Accent)
+      - red: Padrão (destaque da ilha)
+      - system: Sistema (cor de destaque do Windows)
   - ClockAccentGlow: true
-    $name: Show clock background circle/glow
-    $description: Display the soft accent circle/glow behind the time in the expanded clock view. Turn off for a clean, minimal clock without background glow.
+    $name: Mostrar círculo/brilho atrás do relógio
+    $description: Mostra o círculo/brilho suave na cor de destaque atrás da hora no relógio expandido. Desligue para um relógio limpo e minimalista, sem brilho.
   - FontFamily: ""
-    $name: Font family
-    $description: Custom font family for island text (e.g. Segoe UI, Arial, Aptos, Consolas). Leave empty for system default.
+    $name: Fonte
+    $description: Fonte personalizada para o texto da ilha (ex. Segoe UI, Arial, Aptos, Consolas). Deixe vazio para usar a fonte padrão do sistema.
   - ContourBorderMode: default
-    $name: Contour border
-    $description: Choose the island's border style. Default uses the theme's matching border, Auto extracts the border color from album art, and Borderless removes all outer border outlines.
+    $name: Borda do contorno
+    $description: Escolha o estilo da borda da ilha. Padrão usa a borda do tema, Automático extrai a cor da borda da capa do álbum e Sem borda remove todos os contornos externos.
     $options:
-      - default: Default
-      - auto: Auto (From album art)
-      - borderless: Borderless
+      - default: Padrão
+      - auto: Automático (pela capa do álbum)
+      - borderless: Sem borda
   - ContourBorderHex: "#1E1E22"
-    $name: Contour border hex color
-    $description: 'Hex color for the island contour stroke. Changing it from the default overrides the selected Theme preset; restore the default to go back to the preset.'
+    $name: Cor hex da borda do contorno
+    $description: 'Cor hex do traço do contorno da ilha. Mudar do padrão substitui o tema escolhido; volte ao padrão para usar o tema de novo.'
   - PillBgColor: "#08080A"
-    $name: Pill background color
-    $description: 'Hex color for the island background. Accepts 3, 4, 6 or 8 hex digits, so use the 8-digit RRGGBBAA form for a translucent background (for example 0D0D0FB0) while keeping the text and icons opaque. Changing it from the default overrides the selected Theme preset; restore the default to go back to the preset.'
+    $name: Cor de fundo da pílula
+    $description: 'Cor hex do fundo da ilha. Aceita 3, 4, 6 ou 8 dígitos hex; use a forma RRGGBBAA de 8 dígitos para um fundo translúcido (por exemplo 0D0D0FB0) mantendo o texto e os ícones opacos. Mudar do padrão substitui o tema escolhido; volte ao padrão para usar o tema de novo.'
   - TextPrimaryColor: "#FFFFFF"
-    $name: Primary text color
-    $description: 'Accessible hex color for titles and main text. Changing it from the default overrides the selected Theme preset; restore the default to go back to the preset.'
+    $name: Cor do texto principal
+    $description: 'Cor hex acessível para títulos e texto principal. Mudar do padrão substitui o tema escolhido; volte ao padrão para usar o tema de novo.'
   - TextSecondaryColor: "#9B9BA5"
-    $name: Secondary text color
-    $description: 'Accessible hex color for artist names and muted labels. Changing it from the default overrides the selected Theme preset; restore the default to go back to the preset.'
-  $name: Colors & Theming
+    $name: Cor do texto secundário
+    $description: 'Cor hex acessível para nomes de artistas e rótulos discretos. Mudar do padrão substitui o tema escolhido; volte ao padrão para usar o tema de novo.'
+  $name: Cores e tema
 - Indicators:
   - PrivacyDots: true
-    $name: Show privacy indicators (Mic & Camera)
-    $description: Master toggle to display the iOS-style privacy dots when microphone or camera is in use.
+    $name: Mostrar indicadores de privacidade (microfone e câmera)
+    $description: Chave geral dos pontos de privacidade no estilo do iOS quando o microfone ou a câmera estão em uso.
   - PrivacyDotsMic: true
-    $name: Show microphone indicator (Orange dot)
-    $description: Show the orange dot when microphone is in use. Turn off if background apps (like Discord/OBS) keep it permanently active.
+    $name: Mostrar indicador do microfone (ponto laranja)
+    $description: Mostra o ponto laranja quando o microfone está em uso. Desligue se apps em segundo plano (como Discord/OBS) o deixam sempre ativo.
   - PrivacyDotsMicHex: "#FF9500"
-    $name: Microphone dot color
-    $description: Custom hex color for microphone privacy indicator.
+    $name: Cor do ponto do microfone
+    $description: Cor hex personalizada do indicador de privacidade do microfone.
   - PrivacyDotsCam: true
-    $name: Show camera indicator (Green dot)
-    $description: Show the green dot when webcam is in use.
+    $name: Mostrar indicador da câmera (ponto verde)
+    $description: Mostra o ponto verde quando a webcam está em uso.
   - PrivacyDotsCamHex: "#34C759"
-    $name: Camera dot color
-    $description: Custom hex color for camera privacy indicator.
-  $name: Privacy Indicators
+    $name: Cor do ponto da câmera
+    $description: Cor hex personalizada do indicador de privacidade da câmera.
+  $name: Indicadores de privacidade
 - Modules:
   - Media: true
-    $name: Media module
-    $description: Shows album art, song info, and playback controls when music is playing.
+    $name: Módulo de mídia
+    $description: Mostra a capa do álbum, as informações da música e os controles de reprodução quando há música tocando.
   - MediaAutoExpand: false
-    $name: Auto-expand on track change
-    $description: Automatically expand the island when a new song or video starts playing. If disabled, album art updates smoothly in the collapsed pill without unprompted expansion.
+    $name: Expandir ao trocar de faixa
+    $description: Expande a ilha automaticamente quando uma nova música ou vídeo começa. Se desligado, a capa do álbum se atualiza suavemente na pílula recolhida, sem expandir sozinha.
   - MediaPillClock: false
-    $name: Show clock in the collapsed media pill
-    $description: While media is playing, the collapsed pill also shows the current time on the left, separated from the album cover by a thin divider. Hovering still opens the normal player. Uses the same 12h/24h and seconds options as the clock below. Off by default.
+    $name: Mostrar relógio na pílula de mídia recolhida
+    $description: Enquanto há mídia tocando, a pílula recolhida também mostra a hora à esquerda, separada da capa por um divisor fino. Passar o mouse continua abrindo o player normal. Usa as mesmas opções de 12h/24h e segundos do relógio abaixo. Desligado por padrão.
   - Volume: true
-    $name: Volume slider flyout
-    $description: Shows a volume slider banner on the island when adjusting system volume. Disable if you prefer the default Windows volume flyout.
+    $name: Painel de volume
+    $description: Mostra uma barra de volume na ilha quando você ajusta o volume do sistema. Desligue se preferir o painel de volume padrão do Windows.
   - Brightness: true
-    $name: Brightness slider flyout
-    $description: Shows a brightness slider banner on the island when you change the screen brightness. Works with a laptop's built-in display. Disable if you prefer the default Windows brightness flyout.
+    $name: Painel de brilho
+    $description: Mostra uma barra de brilho na ilha quando você muda o brilho da tela. Funciona com a tela integrada de notebooks. Desligue se preferir o painel de brilho padrão do Windows.
   - CapsLock: true
-    $name: Caps Lock module
-    $description: Shows an indicator when Caps Lock or Num Lock state changes.
+    $name: Módulo Caps Lock
+    $description: Mostra um indicador quando o estado do Caps Lock ou do Num Lock muda.
   - Battery: true
-    $name: Battery module
-    $description: Shows an alert when your laptop battery is running low.
+    $name: Módulo de bateria
+    $description: Mostra um alerta quando a bateria do notebook está acabando.
   - BluetoothIndicator: true
-    $name: Bluetooth connect/disconnect indicator
-    $description: Shows a card with the device name, category icon, and battery level (if available) when a Bluetooth device connects or disconnects.
+    $name: Indicador de conexão/desconexão Bluetooth
+    $description: Mostra um cartão com o nome do dispositivo, o ícone da categoria e o nível de bateria (se disponível) quando um dispositivo Bluetooth conecta ou desconecta.
   - BluetoothShowBattery: true
-    $name: Show Bluetooth battery level
-    $description: Reads battery level over BLE GATT when the device supports it. Not all classic Bluetooth devices report battery this way — when unavailable, only a Connected/Disconnected label is shown.
+    $name: Mostrar bateria do Bluetooth
+    $description: Lê o nível de bateria por BLE GATT quando o dispositivo suporta. Nem todo dispositivo Bluetooth clássico informa a bateria assim; quando não há valor, só aparece Conectado/Desconectado.
+  - PeripheralBatteryAlert: 10
+    $name: Aviso de bateria baixa (mouse e headset)
+    $description: "Porcentagem em que aparece o aviso de bateria baixa do mouse BK-R1X e do headset QCY H3 (0 desliga o aviso). O headset informa a bateria de 10 em 10%."
+  - PeripheralBatteryPulses: 1
+    $name: Pulsos vermelhos do aviso de bateria baixa
+    $description: "Quantas vezes a borda do aviso pulsa em vermelho quando ele aparece (0 a 10, 0 = sem pulso). O aviso fica na tela até os pulsos terminarem."
   - Progress: true
-    $name: Progress module
-    $description: Shows a progress ring around the island for downloads or file copies.
+    $name: Módulo de progresso
+    $description: Mostra um anel de progresso em volta da ilha para downloads ou cópias de arquivos.
   - TimerModule: true
-    $name: Focus Timer module
-    $description: Enables a Pomodoro-style focus/break timer, startable from the island's right-click menu.
+    $name: Módulo de timer de foco
+    $description: Ativa um timer de foco/pausa no estilo Pomodoro, iniciado pelo menu do botão direito da ilha.
   - Clipboard: true
-    $name: Clipboard module
-    $description: Shows a quick preview of the text or images you just copied.
+    $name: Módulo de área de transferência
+    $description: Mostra uma prévia rápida do texto ou da imagem que você acabou de copiar.
   - StatusCountdownProgress: false
-    $name: Status countdown progress bar
-    $description: Shows a subtle countdown progress bar at the bottom of temporary status alert cards (such as Clipboard, Notifications, and Device alerts). Disabled by default.
+    $name: Barra de contagem regressiva dos avisos
+    $description: Mostra uma barra de contagem regressiva discreta embaixo dos cartões temporários (como Área de transferência, Notificações e avisos de dispositivo). Desligada por padrão.
   - DoNotDisturbIndicator: false
-    $name: Do Not Disturb status alert
-    $description: Shows a status alert card when Do Not Disturb is toggled in the Windows notification panel.
+    $name: Aviso de Não perturbe
+    $description: Mostra um cartão de aviso quando o Não perturbe é ligado ou desligado no painel de notificações do Windows.
   - NotificationRespectDnD: true
-    $name: Notifications respect Do Not Disturb
-    $description: Suppresses Dynamic Island notification alerts when Windows Do Not Disturb is active.
+    $name: Notificações respeitam o Não perturbe
+    $description: Não mostra as notificações da Dynamic Island enquanto o Não perturbe do Windows estiver ativo.
   - HardwareMonitorModule: true
-    $name: Include Hardware Monitor in scroll loop
-    $description: Add CPU, GPU, RAM, FPS and Network stats card to mouse-wheel scroll loop.
+    $name: Incluir o Monitor de hardware nas abas
+    $description: Adiciona o cartão de CPU, GPU, RAM, FPS e rede às abas trocadas com a roda do mouse.
   - GameOverlay: false
-    $name: Enable game overlay mode
-    $description: Replaces the clock with live stats like FPS, CPU, and RAM usage.
+    $name: Ativar modo overlay de jogo
+    $description: Troca o relógio por estatísticas ao vivo como FPS, uso de CPU e RAM.
   - ShowMetricText: false
-    $name: Show labels in metric chips
-    $description: Adds text labels (like "CPU") inside the game overlay bars.
+    $name: Mostrar rótulos nas métricas
+    $description: Adiciona rótulos de texto (como "CPU") dentro das barras do overlay de jogo.
   - Weather: true
-    $name: Weather module
-    $description: Shows the weather on the right side of the pill. Turn off to only show the clock.
+    $name: Módulo de clima
+    $description: Mostra o clima no lado direito da pílula. Desligue para mostrar só o relógio.
   - WeatherCity: ""
-    $name: Weather City (Optional)
-    $description: Enter your city (e.g. London). Leave blank to use auto IP geolocation.
+    $name: Cidade do clima (opcional)
+    $description: Digite sua cidade (ex. São Paulo). Deixe vazio para usar a localização automática pelo IP.
   - WeatherFahrenheit: false
-    $name: Use Fahrenheit
-    $description: Display weather temperature and wind speed in imperial units.
+    $name: Usar Fahrenheit
+    $description: Mostra a temperatura e a velocidade do vento em unidades imperiais.
   - MediaTabLyrics: false
-    $name: Lyrics in the media tab
-    $description: Adds a lyrics button to the media player controls to toggle an immersive lyrics view over the media tab. Can also be toggled from the right-click menu.
+    $name: Letra na aba de mídia
+    $description: Adiciona um botão de letra aos controles do player para abrir uma visualização imersiva da letra sobre a aba de mídia. Também pode ser ligado pelo menu do botão direito.
   - Lyrics: false
-    $name: Lyrics module
-    $description: Shows synced lyrics for the current track (fetched from LRCLIB, a free open-source lyrics database) while the island is expanded. Scroll to the Lyrics tab to view them.
+    $name: Módulo de letras
+    $description: Mostra a letra sincronizada da faixa atual (buscada no LRCLIB, um banco de letras gratuito e de código aberto) enquanto a ilha está expandida. Role até a aba Letras para ver.
   - LyricsVisualizer: true
-    $name: Show visualizer in Lyrics tab
-    $description: Shows a small live audio waveform next to the Lyrics title while a track is playing.
+    $name: Mostrar visualizador na aba Letras
+    $description: Mostra uma pequena onda de áudio ao vivo ao lado do título Letras enquanto uma faixa toca.
   - KaraokeLyrics: true
-    $name: Karaoke-style glow
-    $description: Lights up the active lyric line progressively, left to right, in sync with the song.
+    $name: Brilho estilo karaokê
+    $description: Ilumina a linha atual da letra aos poucos, da esquerda para a direita, no ritmo da música.
   - KaraokeLetterGlow: true
-    $name: Karaoke letter glow
-    $description: As the karaoke light sweeps across the line, letters near the wipe boundary softly glow, then fade out behind it.
+    $name: Brilho das letras no karaokê
+    $description: Conforme a luz do karaokê passa pela linha, as letras perto da borda da varredura brilham suavemente e depois apagam atrás dela.
   - LyricsOffsetMs: 0
-    $name: Lyrics sync offset - speakers / wired (ms)
-    $description: "Fine-tunes lyric timing in milliseconds (-3000 to 3000, 1 ms steps). Positive = lyrics appear EARLIER, negative = LATER. Raise it if lyrics feel late, lower it if they feel early. Applies to every lyric view (Lyrics tab, collapsed pill, media-tab panel and the karaoke wipe). This value is used whenever the default audio output is NOT a Bluetooth device. You can also nudge it from the right-click menu under Lyrics sync."
+    $name: Ajuste de sincronia da letra - caixas de som / com fio (ms)
+    $description: "Ajusta o tempo da letra em milissegundos (-3000 a 3000, passos de 1 ms). Positivo = a letra aparece MAIS CEDO, negativo = MAIS TARDE. Aumente se a letra parecer atrasada, diminua se parecer adiantada. Vale para todas as visualizações de letra (aba Letras, pílula recolhida, painel da aba de mídia e a varredura do karaokê). Este valor é usado sempre que a saída de áudio padrão NÃO é um dispositivo Bluetooth. Também dá para ajustar pelo menu do botão direito, em Sincronia da letra."
   - LyricsOffsetBluetoothMs: 0
-    $name: Lyrics sync offset - Bluetooth output (ms)
-    $description: "Same as above (-3000 to 3000 ms, positive = EARLIER, negative = LATER), but used automatically while the default audio output is a Bluetooth device. Bluetooth adds latency, so lyrics usually need to be shifted LATER (a negative value) here. The island switches between the two values by itself when the output changes."
+    $name: Ajuste de sincronia da letra - saída Bluetooth (ms)
+    $description: "Igual ao de cima (-3000 a 3000 ms, positivo = MAIS CEDO, negativo = MAIS TARDE), mas usado automaticamente quando a saída de áudio padrão é um dispositivo Bluetooth. O Bluetooth adiciona atraso, então aqui a letra normalmente precisa ir MAIS TARDE (um valor negativo). A ilha alterna entre os dois valores sozinha quando a saída muda."
   - LyricsNeighborLinesVisible: false
-    $name: Show neighboring lyric lines clearly
-    $description: By default the lines above and below the active line are only a faint ghost. Turn this on to make them clearly readable.
+    $name: Mostrar as linhas vizinhas da letra com nitidez
+    $description: Por padrão, as linhas acima e abaixo da linha atual aparecem bem apagadas. Ligue para deixá-las legíveis.
   - LyricsCache: true
-    $name: Lyrics cache (disk)
-    $description: Instant lyrics, less load on LRCLIB, tiny disk use, clearable anytime. Stored in the mod's storage folder. Turn off to stop all lyrics disk reads and writes.
+    $name: Cache de letras (disco)
+    $description: Letras instantâneas, menos carga no LRCLIB, pouco espaço em disco e pode ser limpo a qualquer momento. Fica na pasta de armazenamento do mod. Desligue para parar todas as leituras e gravações de letras no disco.
   - LyricsCacheMaxMB: '25'
-    $name: Lyrics cache size limit
-    $description: Least recently used files are deleted once the cache grows past this. Off disables the disk cache.
+    $name: Limite de tamanho do cache de letras
+    $description: Os arquivos usados há mais tempo são apagados quando o cache passa deste tamanho. Desligado desativa o cache em disco.
     $options:
-      - '0': Off
+      - '0': Desligado
       - '10': 10 MB
-      - '25': 25 MB (default)
+      - '25': 25 MB (padrão)
       - '100': 100 MB
   - Language: auto
-    $name: Language
-    $description: Language for the island's own text labels. Auto follows your Windows display language.
+    $name: Idioma
+    $description: Idioma dos textos da própria ilha. Automático segue o idioma de exibição do Windows.
     $options:
-      - auto: Auto (Follow Windows)
-      - en: English
-      - fr: Français (French)
-      - es: Español (Spanish)
-      - de: Deutsch (German)
-      - pt: Português (Portuguese)
-      - it: Italiano (Italian)
-      - ru: Русский (Russian)
-      - tr: Türkçe (Turkish)
-      - hi: हिन्दी (Hindi)
-      - zh: 简体中文 (Simplified Chinese)
-      - ja: 日本語 (Japanese)
-      - ko: 한국어 (Korean)
+      - auto: Automático (seguir o Windows)
+      - en: English (inglês)
+      - fr: Français (francês)
+      - es: Español (espanhol)
+      - de: Deutsch (alemão)
+      - pt: Português
+      - it: Italiano (italiano)
+      - ru: Русский (russo)
+      - tr: Türkçe (turco)
+      - hi: हिन्दी (hindi)
+      - zh: 简体中文 (chinês simplificado)
+      - ja: 日本語 (japonês)
+      - ko: 한국어 (coreano)
   - ClockFormat: system
-    $name: Clock format
-    $description: Choose 12-hour or 24-hour time, or follow your Windows locale setting.
+    $name: Formato do relógio
+    $description: Escolha 12 ou 24 horas, ou siga o formato regional do Windows.
     $options:
-      - system: Follow Windows locale
-      - 12h: 12-hour (3:07 PM)
-      - 24h: 24-hour (15:07)
+      - system: Seguir o formato do Windows
+      - 12h: 12 horas (3:07 PM)
+      - 24h: 24 horas (15:07)
   - ShowSeconds: false
-    $name: Show seconds on the clock
-    $description: Include seconds in the expanded clock. Costs a little more CPU because the clock then redraws every second.
+    $name: Mostrar segundos no relógio
+    $description: Inclui os segundos no relógio expandido. Usa um pouco mais de CPU, porque o relógio passa a ser redesenhado a cada segundo.
   - DateFormat: ""
-    $name: Custom date format
-    $description: 'Custom date pattern for the idle dashboard. Leave empty to follow your Windows locale. Supports yyyy (year), MM / M (month), dd / d (day), MMM (short month name), MMMM (full month name), ddd / dddd (weekday). Any other characters are printed as-is, so CJK formats like yyyy年MM月dd日 work.'
+    $name: Formato de data personalizado
+    $description: 'Padrão de data personalizado para o painel ocioso. Deixe vazio para seguir o formato regional do Windows. Aceita yyyy (ano), MM / M (mês), dd / d (dia), MMM (nome curto do mês), MMMM (nome completo do mês), ddd / dddd (dia da semana). Os outros caracteres aparecem como estão, então formatos como dd/MM/yyyy ou yyyy年MM月dd日 funcionam.'
   - DateFirst: false
-    $name: Show date above the time
-    $description: Swap the idle dashboard so the date is the headline and the time sits beneath it.
+    $name: Mostrar a data acima da hora
+    $description: Inverte o painel ocioso para a data virar o destaque e a hora ficar embaixo.
   - FirstDayOfWeek: auto
-    $name: First day of the week
-    $description: Which weekday the calendar grid starts on. Auto follows your Windows regional format.
+    $name: Primeiro dia da semana
+    $description: Em qual dia da semana a grade do calendário começa. Automático segue o formato regional do Windows.
     $options:
-      - auto: Auto (Follow Windows)
-      - monday: Monday
-      - sunday: Sunday
+      - auto: Automático (seguir o Windows)
+      - monday: Segunda-feira
+      - sunday: Domingo
   - QuickLookup: false
-    $name: Quick Lookup (hotkey)
-    $description: "Press the Quick Lookup hotkey (Shortcuts tab) to open a search box on the island. Type a word or short phrase and press Enter, or pick your clipboard text or a recent lookup. Nothing is sent anywhere until you submit a search; searches go to en.wiktionary.org and en.wikipedia.org (and api.dictionaryapi.dev as a backup dictionary). Recent lookups are kept in memory only and cleared when the mod restarts."
+    $name: Consulta rápida (atalho)
+    $description: "Aperte o atalho da Consulta rápida (seção Atalhos) para abrir uma caixa de busca na ilha. Digite uma palavra ou frase curta e aperte Enter, ou escolha o texto da área de transferência ou uma consulta recente. Nada é enviado até você fazer a busca; as buscas vão para en.wiktionary.org e en.wikipedia.org (e api.dictionaryapi.dev como dicionário reserva). As consultas recentes ficam só na memória e são apagadas quando o mod reinicia."
   - FileTrayModule: false
-    $name: File Tray (drag & drop shelf)
-    $description: Adds a File Tray card to the scroll loop. Drag files onto the island to park them there, then click to open one, or use the right-click menu to clear the shelf. Files are only referenced, never copied or moved.
+    $name: Bandeja de arquivos (arrastar e soltar)
+    $description: Adiciona um cartão de Bandeja de arquivos às abas. Arraste arquivos para a ilha para deixá-los ali, depois clique para abrir um, ou use o menu do botão direito para esvaziar a bandeja. Os arquivos são só referenciados, nunca copiados ou movidos.
   - FileTrayMaxItems: 10
-    $name: File Tray capacity
-    $description: 1 to 25. How many files the shelf keeps before the oldest one drops off.
+    $name: Capacidade da bandeja de arquivos
+    $description: 1 a 25. Quantos arquivos a bandeja guarda antes de descartar o mais antigo.
   - FileTrayPersist: true
-    $name: File Tray remembers items (disk)
-    $description: Keeps the tray's contents across restarts, in the mod's storage folder. Only file paths and pasted text snippets are stored, never copies of your files. Turn off to stop all disk reads and writes and delete the saved list.
+    $name: A bandeja lembra os itens (disco)
+    $description: Mantém o conteúdo da bandeja entre reinicializações, na pasta de armazenamento do mod. Só os caminhos dos arquivos e trechos de texto colados são guardados, nunca cópias dos seus arquivos. Desligue para parar todas as leituras e gravações no disco e apagar a lista salva.
   - MediaExpandBlocklist: ""
-    $name: Never auto-expand for these apps
-    $description: 'Comma-separated list of app or site names that should never make the island expand on a track change, while still updating quietly in the collapsed pill. Matched loosely against the media source and title, for example: chrome, tiktok, youtube.'
+    $name: Nunca expandir sozinha para estes apps
+    $description: 'Lista separada por vírgulas de apps ou sites que nunca devem fazer a ilha expandir na troca de faixa, mas que continuam atualizando discretamente na pílula recolhida. A comparação é aproximada, com a origem da mídia e o título, por exemplo chrome, tiktok, youtube.'
   - GameOverlayShowFps: true
-    $name: Game overlay - show FPS
-    $description: Include the frame rate in the game overlay strip.
+    $name: Overlay de jogo - mostrar FPS
+    $description: Inclui a taxa de quadros na faixa do overlay de jogo.
   - GameOverlayShowCpu: true
-    $name: Game overlay - show CPU
-    $description: Include CPU utilization in the game overlay strip.
+    $name: Overlay de jogo - mostrar CPU
+    $description: Inclui o uso de CPU na faixa do overlay de jogo.
   - GameOverlayShowGpu: true
-    $name: Game overlay - show GPU
-    $description: Include GPU utilization in the game overlay strip.
+    $name: Overlay de jogo - mostrar GPU
+    $description: Inclui o uso de GPU na faixa do overlay de jogo.
   - GameOverlayShowRam: true
-    $name: Game overlay - show RAM
-    $description: Include memory usage in the game overlay strip.
+    $name: Overlay de jogo - mostrar RAM
+    $description: Inclui o uso de memória na faixa do overlay de jogo.
   - GameOverlayShowDisk: true
-    $name: Game overlay - show disk
-    $description: Include disk usage in the game overlay strip.
+    $name: Overlay de jogo - mostrar disco
+    $description: Inclui o uso de disco na faixa do overlay de jogo.
   - GameOverlayCompact: false
-    $name: Game overlay - compact size
-    $description: Shrink the game overlay to a narrow strip that fits neatly inside the taskbar area.
-  $name: Modules & Features
+    $name: Overlay de jogo - tamanho compacto
+    $description: Encolhe o overlay de jogo para uma faixa estreita que cabe certinho na área da barra de tarefas.
+  $name: Módulos e recursos
 - Shortcuts:
   - HideShowHotkeyEnabled: true
-    $name: Enable hide/show hotkey
-    $description: Toggle the island's visibility instantly with a keyboard shortcut. The hotkey is the only way to bring a hidden island back, so leave this on unless you're comfortable re-enabling it from Windhawk settings.
+    $name: Ativar atalho de ocultar/mostrar
+    $description: Mostra ou oculta a ilha na hora com um atalho de teclado. O atalho é o único jeito de trazer de volta uma ilha oculta, então deixe ligado, a não ser que você saiba reativá-la pelas configurações do Windhawk.
   - HideShowModifiers: ctrl_alt
-    $name: Hotkey modifiers
-    $description: Modifier keys combined with the letter/number key below.
+    $name: Teclas modificadoras do atalho
+    $description: Teclas modificadoras combinadas com a letra/número abaixo.
     $options:
       - ctrl_alt: Ctrl + Alt
       - ctrl_shift: Ctrl + Shift
@@ -570,11 +582,11 @@ We love community contributions! To ensure high-quality updates, please follow t
       - win_alt: Win + Alt
       - ctrl_alt_shift: Ctrl + Alt + Shift
   - HideShowKey: "D"
-    $name: Hotkey letter/number key
-    $description: A single A-Z or 0-9 key combined with the modifiers above. Falls back to "D" if left blank or invalid.
+    $name: Letra/número do atalho
+    $description: Uma única tecla de A-Z ou 0-9 combinada com as modificadoras acima. Volta para "D" se ficar vazia ou inválida.
   - LookupModifiers: ctrl_alt
-    $name: Quick Lookup hotkey modifiers
-    $description: Modifier keys combined with the Quick Lookup key below.
+    $name: Teclas modificadoras da Consulta rápida
+    $description: Teclas modificadoras combinadas com a tecla da Consulta rápida abaixo.
     $options:
       - ctrl_alt: Ctrl + Alt
       - ctrl_shift: Ctrl + Shift
@@ -582,9 +594,9 @@ We love community contributions! To ensure high-quality updates, please follow t
       - win_alt: Win + Alt
       - ctrl_alt_shift: Ctrl + Alt + Shift
   - LookupKey: "Space"
-    $name: Quick Lookup hotkey key
-    $description: 'Type Space, or a single A-Z or 0-9 key. Falls back to Space if left blank or invalid.'
-  $name: Shortcuts & Hotkeys
+    $name: Tecla da Consulta rápida
+    $description: 'Digite Space, ou uma única tecla de A-Z ou 0-9. Volta para Space se ficar vazia ou inválida.'
+  $name: Atalhos e teclas de atalho
 */
 // ==/WindhawkModSettings==
 
@@ -597,7 +609,11 @@ We love community contributions! To ensure high-quality updates, please follow t
 #define _UNICODE
 #endif
 
+// Local patch (battery tab): RFCOMM socket for the headset and Bluetooth state.
+#include <winsock2.h>
+#include <ws2bth.h>
 #include <windows.h>
+#include <bluetoothapis.h>
 #include <unknwn.h>
 #include <dwmapi.h>
 #include <shellapi.h>
@@ -1238,6 +1254,8 @@ struct Settings {
     UINT lookupVk = VK_SPACE;
     bool bluetoothIndicator = true;
     bool bluetoothShowBattery = true;
+    int peripheralBatteryAlert = 10;  // Local patch (battery alert): percent, 0 = off
+    int peripheralBatteryPulses = 1;  // red pulses when the alert appears, 0..10
     D2D1_COLOR_F privacyDotsMicHex = D2D1::ColorF(1.0f, 0.584f, 0.0f, 1.0f); // #FF9500
     D2D1_COLOR_F privacyDotsCamHex = D2D1::ColorF(0.133f, 0.776f, 0.239f, 1.0f); // #10B981
     float tintOpacity = 0.72f;
@@ -1468,7 +1486,18 @@ struct BluetoothDeviceSnapshot {
     int batteryPercent = -1; // -1 = unknown/unavailable
     BluetoothDeviceCategory category = BluetoothDeviceCategory::Generic;
     double expiresAt = 0.0;
+    bool lowBattery = false;  // Local patch (battery alert): reused as the low battery card
+    double shownAt = 0.0;     // start of the red pulses
+    int pulses = 1;           // red pulses, fixed when the card is shown
 };
+
+// Local patch (battery alert): timing of the red pulses on the low battery card.
+constexpr double kAlertPulseDelay = 0.25;  // lets the pill grow in first
+constexpr double kAlertPulseLength = 1.4;  // one pulse, seconds
+
+double AlertPulsesEnd(const BluetoothDeviceSnapshot& s) {
+    return s.shownAt + kAlertPulseDelay + kAlertPulseLength * s.pulses;
+}
 
 struct SystemSnapshot {
     int volumePercent = 0;
@@ -1804,6 +1833,19 @@ std::atomic<double> g_lastLyricsViewTime = 0.0;
 std::mutex g_bluetoothBatteryCacheMutex;
 std::unordered_map<std::wstring, int> g_bluetoothBatteryCache;  // Bluetooth device Id -> last known battery percent (-1 = never learned)
 std::atomic<uint64_t> g_bluetoothConnectGeneration = 0;
+
+// Local patch (battery tab): BK-R1X mouse and QCY H3 headset battery, written by
+// PeripheralBatteryThreadProc and read by DrawPeripheralBatteryDashboard.
+struct PeripheralBattery {
+    bool connected = false;
+    int percent = -1;  // -1 = unknown
+    bool charging = false;
+};
+std::mutex g_peripheralBatteryMutex;  // leaf lock
+PeripheralBattery g_mouseBattery;
+PeripheralBattery g_headsetBattery;
+std::atomic<double> g_batteryTabDrawnAt{0.0};  // last time the tab was painted
+HANDLE g_peripheralBatteryThread = nullptr;
 std::atomic<bool> g_isDnDActive = false;
 void* g_wnfDndSubscription = nullptr;
 
@@ -1972,6 +2014,7 @@ int ActiveTabCount(const Settings& settings) {
     if (settings.weather) ++count;
     if (settings.hardwareMonitorModule) ++count;
     if (settings.fileTrayModule) ++count;
+    ++count;  // Local patch (battery tab): always on, right after the File Tray
     if (settings.lyrics && g_lyricsTabAvailable.load(std::memory_order_relaxed)) ++count;
     return count;
 }
@@ -3063,6 +3106,8 @@ void LoadSettings() {
 
     next.bluetoothIndicator = Wh_GetIntSetting(L"Modules.BluetoothIndicator") != 0;
     next.bluetoothShowBattery = Wh_GetIntSetting(L"Modules.BluetoothShowBattery") != 0;
+    next.peripheralBatteryAlert = std::clamp(Wh_GetIntSetting(L"Modules.PeripheralBatteryAlert"), 0, 100);
+    next.peripheralBatteryPulses = std::clamp(Wh_GetIntSetting(L"Modules.PeripheralBatteryPulses"), 0, 10);
     next.doNotDisturbIndicator = Wh_GetIntSetting(L"Modules.DoNotDisturbIndicator") != 0;
     next.notificationRespectDnD = Wh_GetIntSetting(L"Modules.NotificationRespectDnD") != 0;
 
@@ -6942,6 +6987,298 @@ std::wstring PercentEncodeUtf8(const std::wstring& text) {
         }
     }
     return out;
+}
+
+// ── Local patch (battery tab): peripheral battery readers ────────────────────
+
+// BK-R1X 2.4 GHz receiver (VID A8A5 PID 2255). Same command its web app
+// (bk-r1x.yjx2012.com) sends over WebHID to the vendor interface (usage page
+// 0xFF01, interface 2): 55 30 A5 0B 2E 01 01. The reply starts AA 30 and carries
+// the percent at byte 9 and the charging flag at byte 10 (byte 0 = report ID).
+// Returns false when the receiver is not plugged in.
+bool ReadBkR1xMouseBattery(PeripheralBattery* out) {
+    static const GUID kHidGuid = {0x4D1E55B2, 0xF16F, 0x11CF, {0x88, 0xCB, 0x00, 0x11, 0x11, 0x00, 0x00, 0x30}};
+    HDEVINFO devs = SetupDiGetClassDevsW(&kHidGuid, nullptr, nullptr, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+    if (devs == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+
+    bool found = false;
+    SP_DEVICE_INTERFACE_DATA iface = {sizeof(iface)};
+    for (DWORD i = 0; !found && SetupDiEnumDeviceInterfaces(devs, nullptr, &kHidGuid, i, &iface); ++i) {
+        DWORD size = 0;
+        SetupDiGetDeviceInterfaceDetailW(devs, &iface, nullptr, 0, &size, nullptr);
+        if (size < sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W)) {
+            continue;
+        }
+        std::vector<BYTE> detailBuf(size);
+        auto* detail = reinterpret_cast<SP_DEVICE_INTERFACE_DETAIL_DATA_W*>(detailBuf.data());
+        detail->cbSize = sizeof(*detail);
+        if (!SetupDiGetDeviceInterfaceDetailW(devs, &iface, detail, size, nullptr, nullptr)) {
+            continue;
+        }
+        std::wstring path = detail->DevicePath;
+        std::transform(path.begin(), path.end(), path.begin(), ::towlower);
+        if (path.find(L"vid_a8a5&pid_2255&mi_02") == std::wstring::npos) {
+            continue;
+        }
+
+        HANDLE h = CreateFileW(detail->DevicePath, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                               nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
+        if (h == INVALID_HANDLE_VALUE) {
+            continue;
+        }
+        found = true;
+        out->connected = true;
+        out->percent = -1;
+        out->charging = false;
+
+        OVERLAPPED ov = {};
+        ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        BYTE cmd[65] = {0x00, 0x55, 0x30, 0xA5, 0x0B, 0x2E, 0x01, 0x01};
+        DWORD n = 0;
+        BOOL ok = WriteFile(h, cmd, sizeof(cmd), &n, &ov);
+        if (!ok && GetLastError() == ERROR_IO_PENDING) {
+            ok = GetOverlappedResult(h, &ov, &n, TRUE);
+        }
+        // Other input reports (DPI, online state) can arrive first, so read a few.
+        for (int attempt = 0; ok && attempt < 4; ++attempt) {
+            BYTE in[65] = {};
+            ResetEvent(ov.hEvent);
+            BOOL rd = ReadFile(h, in, sizeof(in), &n, &ov);
+            if (!rd && GetLastError() == ERROR_IO_PENDING) {
+                if (WaitForSingleObject(ov.hEvent, 600) != WAIT_OBJECT_0) {
+                    CancelIoEx(h, &ov);
+                    GetOverlappedResult(h, &ov, &n, TRUE);  // wait for the cancel before `in` dies
+                    break;
+                }
+                rd = GetOverlappedResult(h, &ov, &n, FALSE);
+            }
+            if (!rd) {
+                break;
+            }
+            if (n >= 11 && in[1] == 0xAA && in[2] == 0x30) {
+                // 0 means the mouse itself is asleep or off; the web app ignores it too.
+                if (in[9] > 0 && in[9] <= 100) {
+                    out->percent = in[9];
+                    out->charging = in[10] != 0;
+                }
+                break;
+            }
+        }
+        CloseHandle(ov.hEvent);
+        CloseHandle(h);
+    }
+    SetupDiDestroyDeviceInfoList(devs);
+    return found;
+}
+
+// QCY H3 (BT 84:AC:60:D8:09:79). Windows normally learns headset battery over
+// Hands-Free, which is disabled for this headset on purpose. Instead this opens
+// a raw RFCOMM link to the headset's Hands-Free service, plays the phone side of
+// the AT handshake and waits for the battery report (Apple AT+IPHONEACCEV,
+// 10% steps, or HFP AT+BIEV). No Windows audio endpoint or SCO link is created.
+constexpr BTH_ADDR kQcyH3Address = 0x84AC60D80979ULL;
+
+bool ReadQcyHeadsetBattery(PeripheralBattery* out) {
+    BLUETOOTH_DEVICE_INFO info = {sizeof(info)};
+    info.Address.ullLong = kQcyH3Address;
+    if (BluetoothGetDeviceInfo(nullptr, &info) != ERROR_SUCCESS || !info.fConnected) {
+        return false;  // off or out of range: skip the multi-second connect timeout
+    }
+    out->connected = true;
+    out->percent = -1;
+    out->charging = false;
+
+    SOCKET s = socket(AF_BTH, SOCK_STREAM, BTHPROTO_RFCOMM);
+    if (s == INVALID_SOCKET) {
+        return true;
+    }
+    SOCKADDR_BTH addr = {};
+    addr.addressFamily = AF_BTH;
+    addr.btAddr = kQcyH3Address;
+    addr.serviceClassId = {0x0000111E, 0x0000, 0x1000, {0x80, 0x00, 0x00, 0x80, 0x5F, 0x9B, 0x34, 0xFB}};  // Handsfree
+    if (connect(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+        closesocket(s);
+        return true;
+    }
+    DWORD recvTimeout = 400;
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&recvTimeout), sizeof(recvTimeout));
+
+    auto reply = [s](const char* text) { send(s, text, static_cast<int>(strlen(text)), 0); };
+    // Kept under StopThreads' 3 s join timeout.
+    const ULONGLONG deadline = GetTickCount64() + 2500;
+    std::string pending;
+    char chunk[256];
+    while (out->percent < 0 && GetTickCount64() < deadline &&
+           WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
+        const int got = recv(s, chunk, sizeof(chunk), 0);
+        if (got <= 0) {
+            if (WSAGetLastError() == WSAETIMEDOUT) {
+                continue;
+            }
+            break;
+        }
+        pending.append(chunk, got);
+        size_t end;
+        while ((end = pending.find('\r')) != std::string::npos) {
+            std::string line = pending.substr(0, end);
+            pending.erase(0, end + 1);
+            line.erase(0, line.find_first_not_of('\n'));
+            if (line.rfind("AT+", 0) != 0) {
+                continue;
+            }
+            // HF features 1024 = HF indicators only (no codec negotiation, no SCO).
+            if (line.rfind("AT+BRSF", 0) == 0) {
+                reply("\r\n+BRSF: 1024\r\n");
+            } else if (line == "AT+CIND=?") {
+                reply("\r\n+CIND: (\"service\",(0,1)),(\"call\",(0,1)),(\"callsetup\",(0-3)),"
+                      "(\"callheld\",(0-2)),(\"signal\",(0-5)),(\"roam\",(0,1)),(\"battchg\",(0-5))\r\n");
+            } else if (line == "AT+CIND?") {
+                reply("\r\n+CIND: 1,0,0,0,5,0,5\r\n");
+            } else if (line == "AT+CHLD=?") {
+                reply("\r\n+CHLD: (0,1,2,3)\r\n");
+            } else if (line == "AT+BIND=?") {
+                reply("\r\n+BIND: (2)\r\n");
+            } else if (line == "AT+BIND?") {
+                reply("\r\n+BIND: 2,1\r\n");
+            } else if (line.rfind("AT+XAPL", 0) == 0) {
+                reply("\r\n+XAPL=iPhone,6\r\n");
+            } else if (line.rfind("AT+IPHONEACCEV=", 0) == 0) {
+                // AT+IPHONEACCEV=<count>,<key>,<value>,...  key 1 = battery 0..9
+                std::vector<int> nums;
+                for (size_t p = 15; p < line.size();) {
+                    nums.push_back(atoi(line.c_str() + p));
+                    p = line.find(',', p);
+                    if (p == std::string::npos) break;
+                    ++p;
+                }
+                for (size_t k = 1; k + 1 < nums.size(); k += 2) {
+                    if (nums[k] == 1 && nums[k + 1] >= 0 && nums[k + 1] <= 9) {
+                        out->percent = (nums[k + 1] + 1) * 10;
+                    }
+                }
+            } else if (line.rfind("AT+BIEV=2,", 0) == 0) {
+                const int v = atoi(line.c_str() + 10);
+                if (v >= 0 && v <= 100) out->percent = v;
+            }
+            reply("\r\nOK\r\n");
+        }
+    }
+    closesocket(s);
+    return true;
+}
+
+// Shows the low battery card (the Bluetooth card in its lowBattery form, so it
+// gets the mod's usual 4 s notification time and countdown bar).
+void ShowPeripheralLowBatteryAlert(const wchar_t* name, BluetoothDeviceCategory category, int percent) {
+    BluetoothDeviceSnapshot snapshot;
+    snapshot.active = true;
+    snapshot.connected = true;
+    snapshot.deviceName = name;
+    snapshot.category = category;
+    snapshot.batteryPercent = percent;
+    snapshot.lowBattery = true;
+    snapshot.shownAt = NowSeconds();
+    snapshot.pulses = GetSettingsCopy().peripheralBatteryPulses;
+    // The mod's usual 4 s, stretched when more pulses than fit are asked for.
+    snapshot.expiresAt = std::max(snapshot.shownAt + 4.0, AlertPulsesEnd(snapshot) + 0.6);
+    ++g_bluetoothConnectGeneration;  // stops a pending connect-battery retry from editing this card
+    {
+        std::lock_guard lock(g_stateMutex);
+        g_state.bluetoothDevice = std::move(snapshot);
+    }
+    Wh_Log(L"Battery alert: %s at %d%%", name, percent);
+    TriggerNudge();
+}
+
+// Alerts once when the level reaches the threshold; re-arms once it is back
+// above it (or charging), so a device sitting at 10% doesn't alert every minute.
+// Returns true when it showed the card.
+bool CheckPeripheralLowBattery(const PeripheralBattery& d, int threshold, bool* armed,
+                               const wchar_t* name, BluetoothDeviceCategory category) {
+    if (!d.connected || d.percent < 0) {
+        return false;  // unknown: keep the current state
+    }
+    if (threshold <= 0 || d.charging || d.percent > threshold) {
+        *armed = true;
+        return false;
+    }
+    if (!*armed) {
+        return false;
+    }
+    *armed = false;
+    ShowPeripheralLowBatteryAlert(name, category, d.percent);
+    return true;
+}
+
+// Mouse every 60 s (one HID round trip). Headset every 5 min in the background,
+// every 60 s while the battery tab is on screen, so it sees few RFCOMM connects.
+DWORD WINAPI PeripheralBatteryThreadProc(void*) {
+    WSADATA wsa;
+    const bool winsock = WSAStartup(MAKEWORD(2, 2), &wsa) == 0;
+    if (WaitForSingleObject(g_stopEvent, 5000) != WAIT_TIMEOUT) {
+        if (winsock) WSACleanup();
+        return 0;
+    }
+
+    double lastMousePoll = -1.0;
+    double lastHeadsetPoll = -1.0;
+    bool mouseArmed = true;
+    bool headsetArmed = true;
+    do {
+        const double now = NowSeconds();
+        const bool tabVisible = now - g_batteryTabDrawnAt.load(std::memory_order_relaxed) < 2.0;
+        const bool pollMouse = lastMousePoll < 0.0 || now - lastMousePoll >= 60.0;
+        const bool pollHeadset = winsock && (lastHeadsetPoll < 0.0 ||
+                                             now - lastHeadsetPoll >= (tabVisible ? 60.0 : 300.0));
+        if (!pollMouse && !pollHeadset) {
+            continue;
+        }
+
+        PeripheralBattery mouse, headset;
+        if (pollMouse) {
+            lastMousePoll = now;
+            ReadBkR1xMouseBattery(&mouse);
+        }
+        if (pollHeadset) {
+            lastHeadsetPoll = now;
+            ReadQcyHeadsetBattery(&headset);
+        }
+        {
+            std::lock_guard lock(g_peripheralBatteryMutex);
+            if (pollMouse) {
+                // A mouse that is asleep answers without a value: keep the last one.
+                if (mouse.connected && mouse.percent < 0 && g_mouseBattery.connected) {
+                    mouse.percent = g_mouseBattery.percent;
+                    mouse.charging = g_mouseBattery.charging;
+                }
+                g_mouseBattery = mouse;
+            }
+            if (pollHeadset) {
+                if (headset.connected && headset.percent < 0 && g_headsetBattery.connected) {
+                    headset.percent = g_headsetBattery.percent;
+                }
+                g_headsetBattery = headset;
+            }
+        }
+
+        const int threshold = GetSettingsCopy().peripheralBatteryAlert;
+        if (pollMouse &&
+            CheckPeripheralLowBattery(mouse, threshold, &mouseArmed, L"Mouse BK-R1X", BluetoothDeviceCategory::Mouse) &&
+            pollHeadset) {
+            // Both low at once: let the mouse card finish before the headset one replaces it.
+            if (WaitForSingleObject(g_stopEvent, 4500) != WAIT_TIMEOUT) break;
+        }
+        if (pollHeadset) {
+            CheckPeripheralLowBattery(headset, threshold, &headsetArmed, L"Headset QCY H3",
+                                      BluetoothDeviceCategory::Headphones);
+        }
+        g_layoutDirty = true;
+    } while (WaitForSingleObject(g_stopEvent, 1000) == WAIT_TIMEOUT);
+
+    if (winsock) WSACleanup();
+    return 0;
 }
 
 DWORD WINAPI WeatherThreadProc(void*) {
@@ -12924,6 +13261,22 @@ class Renderer {
             redBrush_->SetOpacity(1.0f);
         }
 
+        // Local patch (battery alert): soft red pulses on the low battery card,
+        // starting once the pill has mostly grown in. sin^2 eases each one in and
+        // out and is periodic, so N pulses are just N periods.
+        if (activity.kind == IslandKind::Bluetooth && state.bluetoothDevice.lowBattery) {
+            const double t = now - state.bluetoothDevice.shownAt - kAlertPulseDelay;
+            if (t > 0.0 && t < kAlertPulseLength * state.bluetoothDevice.pulses) {
+                const float wave = static_cast<float>(std::sin(3.14159265 * t / kAlertPulseLength));
+                const float a = wave * wave;
+                redBrush_->SetOpacity(0.25f * a);  // wide faint stroke = soft glow
+                DrawIslandShape(rect, radius, settings.w11Style, settings.notchStyle, redBrush_.Get(), 7.0f);
+                redBrush_->SetOpacity(0.90f * a);
+                DrawIslandShape(rect, radius, settings.w11Style, settings.notchStyle, redBrush_.Get(), 2.2f);
+                redBrush_->SetOpacity(1.0f);
+            }
+        }
+
         // No inner highlight ring here. A second bright hairline just inside the
         // contour read as a light rim tracing the whole island, which is exactly
         // the edge glow this design drops. The contour stroke alone defines the
@@ -14348,6 +14701,104 @@ class Renderer {
         return material_.accent;
     }
 
+    // Local patch (battery tab): BK-R1X mouse and QCY H3 headset, one card each,
+    // styled like the Hardware Monitor cards. Data comes from PeripheralBatteryThreadProc.
+    void DrawPeripheralBatteryDashboard(D2D1_RECT_F rect, float scale) {
+        g_batteryTabDrawnAt.store(NowSeconds(), std::memory_order_relaxed);
+        PeripheralBattery devices[2];
+        {
+            std::lock_guard lock(g_peripheralBatteryMutex);
+            devices[0] = g_mouseBattery;
+            devices[1] = g_headsetBattery;
+        }
+        const wchar_t* names[2] = {L"Mouse BK-R1X", L"Headset QCY H3"};
+        const BluetoothDeviceCategory icons[2] = {BluetoothDeviceCategory::Mouse, BluetoothDeviceCategory::Headphones};
+
+        const float padX = 24.0f * scale;
+        textBrush_->SetOpacity(0.96f);
+        const wchar_t* title = L"Bateria";
+        if (boldTextFormat_) {
+            boldTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            target_->DrawTextW(title, static_cast<UINT32>(wcslen(title)), boldTextFormat_.Get(),
+                               D2D1::RectF(rect.left + padX, rect.top + 16.0f * scale,
+                                           rect.right - padX, rect.top + 32.0f * scale),
+                               textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+            boldTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        }
+
+        const float rowH = 50.0f * scale;
+        const float rowGap = 8.0f * scale;
+        const float gridTop = rect.top + 40.0f * scale;
+        for (int i = 0; i < 2; ++i) {
+            const PeripheralBattery& d = devices[i];
+            const float top = gridTop + static_cast<float>(i) * (rowH + rowGap);
+            const D2D1_RECT_F card = D2D1::RectF(rect.left + padX, top, rect.right - padX, top + rowH);
+            DrawCard(card, 10.0f * scale);
+
+            const float badge = 26.0f * scale;
+            const D2D1_RECT_F badgeRect = D2D1::RectF(card.left + 10.0f * scale, (card.top + card.bottom - badge) * 0.5f,
+                                                      card.left + 10.0f * scale + badge,
+                                                      (card.top + card.bottom + badge) * 0.5f);
+            DrawBluetoothCategoryIcon(badgeRect, icons[i]);
+
+            wchar_t value[48];
+            const bool hasValue = d.connected && d.percent >= 0;
+            if (!d.connected) {
+                wcscpy_s(value, L"Desconectado");
+            } else if (!hasValue) {
+                wcscpy_s(value, L"--");
+            } else {
+                swprintf_s(value, L"%d%%%ls", d.percent, d.charging ? L" · carregando" : L"");
+            }
+
+            const float textLeft = badgeRect.right + 10.0f * scale;
+            const float textRight = card.right - 12.0f * scale;
+            if (smallTextFormat_) {
+                smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                smallTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                mutedBrush_->SetOpacity(0.60f);
+                target_->DrawTextW(names[i], static_cast<UINT32>(wcslen(names[i])), smallTextFormat_.Get(),
+                                   D2D1::RectF(textLeft, card.top + 5.0f * scale, textRight, card.top + 19.0f * scale),
+                                   mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                smallTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            }
+            if (textFormat_) {
+                textFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                textFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                textBrush_->SetOpacity(hasValue ? 0.95f : 0.55f);
+                target_->DrawTextW(value, static_cast<UINT32>(wcslen(value)), textFormat_.Get(),
+                                   D2D1::RectF(textLeft, card.top + 18.0f * scale, textRight, card.top + 38.0f * scale),
+                                   textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                textFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            }
+
+            if (hasValue) {
+                const float fraction = Clamp(d.percent / 100.0f, 0.0f, 1.0f);
+                // LoadStateColor is amber past 75% and red past 90%, so feed it the
+                // used fraction: amber under 25% battery, red under 10%.
+                const D2D1_COLOR_F tint = LoadStateColor(1.0f - fraction);
+                const D2D1_RECT_F track = D2D1::RectF(textLeft, card.bottom - 9.0f * scale,
+                                                      textRight, card.bottom - 6.0f * scale);
+                ComPtr<ID2D1SolidColorBrush> trackBrush;
+                if (SUCCEEDED(target_->CreateSolidColorBrush(material_.raisedStrong, &trackBrush)) && trackBrush) {
+                    target_->FillRoundedRectangle(D2D1::RoundedRect(track, 1.5f * scale, 1.5f * scale), trackBrush.Get());
+                }
+                const float span = (track.right - track.left) * fraction;
+                if (span > 0.5f) {
+                    if (ID2D1SolidColorBrush* fillBrush = AcquireBrush(WithAlpha(tint, 0.95f))) {
+                        target_->FillRoundedRectangle(
+                            D2D1::RoundedRect(D2D1::RectF(track.left, track.top, track.left + span, track.bottom),
+                                              1.5f * scale, 1.5f * scale),
+                            fillBrush);
+                    }
+                }
+            }
+        }
+
+        textBrush_->SetOpacity(0.96f);
+        mutedBrush_->SetOpacity(0.75f);
+    }
+
     void DrawHardwareMonitorDashboard(const SharedState& state, D2D1_RECT_F rect, const Settings& settings, float scale) {
         (void)settings;
 
@@ -15385,6 +15836,7 @@ class Renderer {
             if (settings.weather) activeTabs.push_back(1);
             if (settings.hardwareMonitorModule) activeTabs.push_back(2);
             if (settings.fileTrayModule) activeTabs.push_back(4);
+            activeTabs.push_back(5); // Local patch (battery tab)
 
             int maxTabs = static_cast<int>(activeTabs.size());
             int tabIdx = NormalizedTabIndex(settings);
@@ -15405,6 +15857,7 @@ class Renderer {
                 else if (activeTabId == 1) DrawWeatherDashboard(state, fullRect, settings, now, scale, hasWeather, wIcon, wText);
                 else if (activeTabId == 2) DrawHardwareMonitorDashboard(state, fullRect, settings, scale);
                 else if (activeTabId == 4) DrawFileTrayDashboard(state, fullRect, settings, scale);
+                else if (activeTabId == 5) DrawPeripheralBatteryDashboard(fullRect, scale);
             });
 
             DrawTabPagination(fullRect, maxTabs);
@@ -15957,6 +16410,7 @@ class Renderer {
             if (settings.weather) activeTabs.push_back(2);
             if (settings.hardwareMonitorModule) activeTabs.push_back(3);
             if (settings.fileTrayModule) activeTabs.push_back(4);
+            activeTabs.push_back(6);  // Local patch (battery tab)
             if (settings.lyrics && !lyricsFirst) activeTabs.push_back(5);  // Lyrics (last)
 
             // Same settings object as the list above, so the index can't be
@@ -16206,6 +16660,8 @@ class Renderer {
                 DrawHardwareMonitorDashboard(state, rect, settings, 1.0f);
             } else if (activeTabId == 4) {
                 DrawFileTrayDashboard(state, rect, settings, 1.0f);
+            } else if (activeTabId == 6) {
+                DrawPeripheralBatteryDashboard(rect, 1.0f);  // Local patch (battery tab)
             } else if (activeTabId == 5) {
                 // Laid out at the final expanded size and pinned to the top, so growing
                 // the island only reveals the lyrics instead of sliding them around.
@@ -19928,13 +20384,17 @@ class Renderer {
     void DrawBluetoothDevice(const SharedState& state, D2D1_RECT_F rect) {
         if (rect.bottom - rect.top < 24.0f || rect.right - rect.left < 140.0f) return;
         const double now = NowSeconds();
-        const float ttl = 4.0f;
+        // Local patch (battery alert): the low battery card can last longer than 4 s.
+        const float ttl = state.bluetoothDevice.lowBattery
+            ? static_cast<float>(state.bluetoothDevice.expiresAt - state.bluetoothDevice.shownAt)
+            : 4.0f;
         const float remaining = Clamp(static_cast<float>(state.bluetoothDevice.expiresAt - now), 0.0f, ttl);
         const float progress = remaining / ttl;
 
         const bool connected = state.bluetoothDevice.connected;
         const int battery = state.bluetoothDevice.batteryPercent;
-        const bool hasBattery = g_settings.bluetoothShowBattery && battery >= 0;
+        const bool lowBattery = state.bluetoothDevice.lowBattery;  // Local patch (battery alert)
+        const bool hasBattery = (g_settings.bluetoothShowBattery || lowBattery) && battery >= 0;
 
         const float cy = (rect.top + rect.bottom) * 0.5f;
         const float badgeSz = (rect.bottom - rect.top) - 16.0f;
@@ -19949,7 +20409,7 @@ class Renderer {
         DrawBluetoothCategoryIcon(badge, state.bluetoothDevice.category);
 
         ComPtr<ID2D1SolidColorBrush> dotBrush;
-        D2D1_COLOR_F dotColor = connected
+        D2D1_COLOR_F dotColor = (connected && !lowBattery)
             ? D2D1::ColorF(0.19f, 0.83f, 0.38f, 1.0f)
             : D2D1::ColorF(1.0f, 0.27f, 0.22f, 1.0f);
         target_->CreateSolidColorBrush(dotColor, &dotBrush);
@@ -19961,7 +20421,9 @@ class Renderer {
         const float rightEdge = hasBattery ? rect.right - 62.0f : rect.right - 14.0f;
 
         mutedBrush_->SetOpacity(0.50f);
-        std::wstring label = std::wstring(Loc(L"Bluetooth")) + L" " + (connected ? Loc(L"Connected") : Loc(L"Disconnected"));
+        std::wstring label = lowBattery
+            ? std::wstring(L"Bateria baixa")
+            : std::wstring(Loc(L"Bluetooth")) + L" " + (connected ? Loc(L"Connected") : Loc(L"Disconnected"));
         D2D1_RECT_F labelRect = showBar
             ? D2D1::RectF(tx, cy - 18.0f, rightEdge, cy - 2.0f)
             : D2D1::RectF(tx, cy - 16.0f, rightEdge, cy - 1.0f);
@@ -21077,7 +21539,7 @@ std::vector<IslandKind> ChooseActivities(const SharedState& state, const Setting
     if (state.device.active && now < state.device.expiresAt) {
         activities.push_back(IslandKind::Device);
     }
-    if (settings.bluetoothIndicator && state.bluetoothDevice.active &&
+    if ((settings.bluetoothIndicator || state.bluetoothDevice.lowBattery) && state.bluetoothDevice.active &&
         now < state.bluetoothDevice.expiresAt) {
         activities.push_back(IslandKind::Bluetooth);
     }
@@ -23707,7 +24169,10 @@ DWORD WINAPI RenderThreadProc(void*) {
             mediaAnimating || isTransientPill(primary.kind) ||
             (secondary && isTransientPill(secondary->kind)) ||
             (countdownBarsOn && (hasCountdownBar(primary.kind) ||
-                                 (secondary && hasCountdownBar(secondary->kind))));
+                                 (secondary && hasCountdownBar(secondary->kind)))) ||
+            // Local patch (battery alert): keep frames coming for the red pulse.
+            (snapshot.bluetoothDevice.lowBattery && snapshot.bluetoothDevice.active &&
+             now < AlertPulsesEnd(snapshot.bluetoothDevice) + 0.1);
         if (continuousAnimation) {
             needsRender = true;
         }
@@ -24010,6 +24475,7 @@ bool StartThreads() {
     g_notificationThread = CreateThread(nullptr, 0, NotificationThreadProc, nullptr, 0, nullptr);
 #endif
     g_bluetoothThread = CreateThread(nullptr, 0, BluetoothThreadProc, nullptr, 0, nullptr);
+    g_peripheralBatteryThread = CreateThread(nullptr, 0, PeripheralBatteryThreadProc, nullptr, 0, nullptr);  // Local patch (battery tab)
     SubscribeDndNotification();
 
     return true;
@@ -24027,7 +24493,7 @@ void StopThreads() {
         SetEvent(g_stopEvent);
     }
 
-    HANDLE handles[] = {g_renderThread, g_mediaThread, g_audioThread, g_weatherThread, g_lyricsThread, g_notificationThread, g_keyboardThread, g_mouseThread, g_bluetoothThread};
+    HANDLE handles[] = {g_renderThread, g_mediaThread, g_audioThread, g_weatherThread, g_lyricsThread, g_notificationThread, g_keyboardThread, g_mouseThread, g_bluetoothThread, g_peripheralBatteryThread};
     for (HANDLE handle : handles) {
         if (handle) {
             WaitForSingleObject(handle, 3000);
@@ -24046,6 +24512,7 @@ void StopThreads() {
     g_mouseThread = nullptr;
     g_mouseThreadId = 0;
     g_bluetoothThread = nullptr;
+    g_peripheralBatteryThread = nullptr;
 
     if (g_stopEvent) {
         CloseHandle(g_stopEvent);
