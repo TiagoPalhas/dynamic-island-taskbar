@@ -2,7 +2,7 @@
 // @id              dynamic-island-taskbar
 // @name            Dynamic Island na Barra de Tarefas
 // @description     Dynamic Island docked inside the Windows 11 taskbar: media controls on the collapsed pill, alerts that open to the right, follows the taskbar, mouse/headset battery tab and low battery alert, settings in Brazilian Portuguese. Fork of Dynamic Island for Windows 1.4.0.
-// @version         1.1.0
+// @version         1.2.0
 // @author          Tiago Palhas (fork of Dynamic Island for Windows by devcode90)
 // @github          https://github.com/TiagoPalhas
 // @homepage        https://github.com/TiagoPalhas/dynamic-island-taskbar
@@ -35,6 +35,15 @@ What this fork changes:
 - Battery tab (1.1.0) in the scroll loop for a BK-R1X 2.4 GHz mouse (vendor HID
   command) and a QCY H3 headset (read over its own RFCOMM link, so it works with
   Hands-Free turned off). Both devices are fixed in the source.
+- QCY H3 battery from its BLE advertisement (1.2.0): exact 1% level with the
+  charging flag, read for up to 8 s per poll; the Hands-Free route (10% steps)
+  is only the fallback, and a value older than 15 min is no longer shown. The
+  Bluetooth connect/disconnect card uses the same reading for the headset
+  instead of Windows' battery property, which stays frozen with Hands-Free off.
+- VICTORY VT-883 mouse (1.2.0) on its YICHIP receiver (VID 3151 PID 3020): shown
+  as connected only, since the mouse never sends its battery to the receiver.
+  The tab lists only connected devices unless the setting to show disconnected
+  ones is on.
 - Low battery alert (1.1.0) for those two devices, with a configurable threshold
   and number of soft red pulses.
 - Settings translated to Brazilian Portuguese (1.1.0).
@@ -419,7 +428,10 @@ We love community contributions! To ensure high-quality updates, please follow t
     $description: Lê o nível de bateria por BLE GATT quando o dispositivo suporta. Nem todo dispositivo Bluetooth clássico informa a bateria assim; quando não há valor, só aparece Conectado/Desconectado.
   - PeripheralBatteryAlert: 10
     $name: Aviso de bateria baixa (mouse e headset)
-    $description: "Porcentagem em que aparece o aviso de bateria baixa do mouse BK-R1X e do headset QCY H3 (0 desliga o aviso). O headset informa a bateria de 10 em 10%."
+    $description: "Porcentagem em que aparece o aviso de bateria baixa do mouse BK-R1X e do headset QCY H3 (0 desliga o aviso). O headset informa a bateria de 1 em 1% pelo anúncio BLE dele (de 10 em 10% quando o anúncio não chega). O mouse VT-883 não envia a bateria ao receptor, então ele só aparece como conectado."
+  - PeripheralBatteryShowDisconnected: false
+    $name: Mostrar dispositivos desconectados na aba Bateria
+    $description: Desligado, a aba Bateria lista só os mouses e headsets conectados. Ligado, mostra também os desconectados.
   - PeripheralBatteryPulses: 1
     $name: Pulsos vermelhos do aviso de bateria baixa
     $description: "Quantas vezes a borda do aviso pulsa em vermelho quando ele aparece (0 a 10, 0 = sem pulso). O aviso fica na tela até os pulsos terminarem."
@@ -681,6 +693,7 @@ We love community contributions! To ensure high-quality updates, please follow t
 #include <winrt/Windows.Devices.Enumeration.h>
 #include <winrt/Windows.Devices.Bluetooth.h>
 #include <winrt/Windows.Devices.Bluetooth.GenericAttributeProfile.h>
+#include <winrt/Windows.Devices.Bluetooth.Advertisement.h>  // Local patch (battery tab): QCY advert
 #else
 #define DYNAMIC_ISLAND_HAS_BLUETOOTH_WATCHER 0
 #endif
@@ -1256,6 +1269,7 @@ struct Settings {
     bool bluetoothShowBattery = true;
     int peripheralBatteryAlert = 10;  // Local patch (battery alert): percent, 0 = off
     int peripheralBatteryPulses = 1;  // red pulses when the alert appears, 0..10
+    bool peripheralBatteryShowDisconnected = false;  // Local patch (battery tab): list unplugged devices too
     D2D1_COLOR_F privacyDotsMicHex = D2D1::ColorF(1.0f, 0.584f, 0.0f, 1.0f); // #FF9500
     D2D1_COLOR_F privacyDotsCamHex = D2D1::ColorF(0.133f, 0.776f, 0.239f, 1.0f); // #10B981
     float tintOpacity = 0.72f;
@@ -1844,6 +1858,15 @@ struct PeripheralBattery {
 std::mutex g_peripheralBatteryMutex;  // leaf lock
 PeripheralBattery g_mouseBattery;
 PeripheralBattery g_headsetBattery;
+PeripheralBattery g_vt883Battery;  // connection only: the mouse never sends its battery to the receiver
+std::atomic<int> g_headsetLastPercent{-1};  // last QCY H3 level actually read, kept after a disconnect
+std::atomic<int> g_headsetPollNow{0};  // reads left to try right away after a QCY H3 connect
+
+// Windows device Ids carry the address ("...-84:ac:60:d8:09:79").
+bool IsQcyH3DeviceId(std::wstring id) {
+    std::transform(id.begin(), id.end(), id.begin(), ::towlower);
+    return id.find(L"84:ac:60:d8:09:79") != std::wstring::npos;
+}
 std::atomic<double> g_batteryTabDrawnAt{0.0};  // last time the tab was painted
 HANDLE g_peripheralBatteryThread = nullptr;
 std::atomic<bool> g_isDnDActive = false;
@@ -3108,6 +3131,7 @@ void LoadSettings() {
     next.bluetoothShowBattery = Wh_GetIntSetting(L"Modules.BluetoothShowBattery") != 0;
     next.peripheralBatteryAlert = std::clamp(Wh_GetIntSetting(L"Modules.PeripheralBatteryAlert"), 0, 100);
     next.peripheralBatteryPulses = std::clamp(Wh_GetIntSetting(L"Modules.PeripheralBatteryPulses"), 0, 10);
+    next.peripheralBatteryShowDisconnected = Wh_GetIntSetting(L"Modules.PeripheralBatteryShowDisconnected") != 0;
     next.doNotDisturbIndicator = Wh_GetIntSetting(L"Modules.DoNotDisturbIndicator") != 0;
     next.notificationRespectDnD = Wh_GetIntSetting(L"Modules.NotificationRespectDnD") != 0;
 
@@ -6268,6 +6292,16 @@ int TryReadClassicBluetoothBatteryPercent(uint64_t address) {
 }
 
 int TryReadBluetoothBatteryPercent(winrt::hstring const& deviceId) {
+    // Local patch (battery tab): with Hands-Free off, Windows' battery property for
+    // the QCY H3 is frozen at its last Hands-Free value, so use the battery thread's
+    // reading of the headset instead: the current one, else the last one before it
+    // disconnected (the battery thread swaps in a fresh reading as soon as it has it).
+    if (IsQcyH3DeviceId(deviceId.c_str())) {
+        std::lock_guard lock(g_peripheralBatteryMutex);
+        return g_headsetBattery.connected && g_headsetBattery.percent >= 0 ? g_headsetBattery.percent
+                                                                           : g_headsetLastPercent.load();
+    }
+
     int result = -1;
 
     // Try the classic per-devnode battery property first — this is what
@@ -6343,6 +6377,9 @@ void HandleBluetoothConnected(
 
     const uint64_t myGeneration = ++g_bluetoothConnectGeneration;
     const std::wstring deviceId = info.Id().c_str();
+    if (IsQcyH3DeviceId(deviceId)) {
+        g_headsetPollNow = 5;  // Local patch (battery tab): the battery thread patches the card
+    }
 
     BluetoothDeviceSnapshot snapshot;
     snapshot.active = true;
@@ -6428,7 +6465,9 @@ void HandleBluetoothDisconnected(
     snapshot.connected = false;
     snapshot.deviceName = name;
     snapshot.category = category;
-    snapshot.batteryPercent = GetLastKnownBluetoothBatteryPercent(std::wstring(id.c_str()));
+    snapshot.batteryPercent = IsQcyH3DeviceId(id.c_str())
+        ? g_headsetLastPercent.load()  // Local patch (battery tab): the real last reading
+        : GetLastKnownBluetoothBatteryPercent(std::wstring(id.c_str()));
     snapshot.expiresAt = NowSeconds() + 4.0;
 
     {
@@ -7073,12 +7112,83 @@ bool ReadBkR1xMouseBattery(PeripheralBattery* out) {
     return found;
 }
 
+// VICTORY VT-883 on a generic YICHIP receiver (VID 3151 PID 3020). Probing its
+// vendor collection (report 0xBA) only returned fixed receiver values that did
+// not change with the mouse off, so the mouse never sends its battery: this only
+// reports whether the receiver is plugged in.
+bool ReadVt883MouseConnected(PeripheralBattery* out) {
+    HDEVINFO devs = SetupDiGetClassDevsW(nullptr, L"USB", nullptr, DIGCF_PRESENT | DIGCF_ALLCLASSES);
+    if (devs == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    SP_DEVINFO_DATA dev = {sizeof(dev)};
+    wchar_t id[256];
+    for (DWORD i = 0; !out->connected && SetupDiEnumDeviceInfo(devs, i, &dev); ++i) {
+        if (SetupDiGetDeviceInstanceIdW(devs, &dev, id, ARRAYSIZE(id), nullptr) &&
+            _wcsnicmp(id, L"USB\\VID_3151&PID_3020\\", 22) == 0) {
+            out->connected = true;
+        }
+    }
+    SetupDiDestroyDeviceInfoList(devs);
+    return out->connected;
+}
+
 // QCY H3 (BT 84:AC:60:D8:09:79). Windows normally learns headset battery over
 // Hands-Free, which is disabled for this headset on purpose. Instead this opens
 // a raw RFCOMM link to the headset's Hands-Free service, plays the phone side of
 // the AT handshake and waits for the battery report (Apple AT+IPHONEACCEV,
 // 10% steps, or HFP AT+BIEV). No Windows audio endpoint or SCO link is created.
 constexpr BTH_ADDR kQcyH3Address = 0x84AC60D80979ULL;
+
+// The headset also advertises over BLE (as "QCY H3-APP") with QCY manufacturer
+// data, company 0x521C: byte 5 = battery 0..100 in 1% steps, bit 7 = charging;
+// bytes 11..16 = the classic address in the order [12][11][13][16][15][14].
+// Windows gets nothing from it, but it is the exact level the QCY app shows and
+// needs no connection. Listens for up to 8 s; returns false when nothing came.
+bool ReadQcyAdvertisedBattery(PeripheralBattery* out) {
+    using namespace winrt::Windows::Devices::Bluetooth::Advertisement;
+    struct Shared {
+        std::atomic<int> percent{-1};
+        std::atomic<bool> charging{false};
+        HANDLE got = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        ~Shared() { if (got) CloseHandle(got); }
+    };
+    auto shared = std::make_shared<Shared>();  // the callback may still run after Stop()
+    try {
+        BluetoothLEAdvertisementWatcher watcher;
+        watcher.ScanningMode(BluetoothLEScanningMode::Active);
+        watcher.Received([shared](auto const&, BluetoothLEAdvertisementReceivedEventArgs const& args) {
+            for (auto const& m : args.Advertisement().ManufacturerData()) {
+                auto data = m.Data();
+                if (m.CompanyId() != 0x521C || data.Length() < 17) {
+                    continue;
+                }
+                const uint8_t* p = data.data();
+                const BTH_ADDR mac = (BTH_ADDR(p[12]) << 40) | (BTH_ADDR(p[11]) << 32) | (BTH_ADDR(p[13]) << 24) |
+                                     (BTH_ADDR(p[16]) << 16) | (BTH_ADDR(p[15]) << 8) | BTH_ADDR(p[14]);
+                const int level = p[5] & 0x7F;
+                if (mac != kQcyH3Address || level > 100) {
+                    continue;
+                }
+                shared->charging = (p[5] & 0x80) != 0;
+                shared->percent = level;
+                SetEvent(shared->got);
+            }
+        });
+        watcher.Start();
+        HANDLE waits[] = {shared->got, g_stopEvent};
+        WaitForMultipleObjects(2, waits, FALSE, 8000);  // it advertises about every 6 s
+        watcher.Stop();
+    } catch (winrt::hresult_error const& e) {
+        Wh_Log(L"QCY advert scan failed: 0x%08X", static_cast<unsigned>(e.code()));
+    }
+    if (shared->percent < 0) {
+        return false;
+    }
+    out->percent = shared->percent;
+    out->charging = shared->charging;
+    return true;
+}
 
 bool ReadQcyHeadsetBattery(PeripheralBattery* out) {
     BLUETOOTH_DEVICE_INFO info = {sizeof(info)};
@@ -7089,6 +7199,9 @@ bool ReadQcyHeadsetBattery(PeripheralBattery* out) {
     out->connected = true;
     out->percent = -1;
     out->charging = false;
+    if (ReadQcyAdvertisedBattery(out)) {
+        return true;  // exact level; the Hands-Free route below only gives 10% steps
+    }
 
     SOCKET s = socket(AF_BTH, SOCK_STREAM, BTHPROTO_RFCOMM);
     if (s == INVALID_SOCKET) {
@@ -7215,22 +7328,40 @@ bool CheckPeripheralLowBattery(const PeripheralBattery& d, int threshold, bool* 
 // Mouse every 60 s (one HID round trip). Headset every 5 min in the background,
 // every 60 s while the battery tab is on screen, so it sees few RFCOMM connects.
 DWORD WINAPI PeripheralBatteryThreadProc(void*) {
+    winrt::init_apartment(winrt::apartment_type::multi_threaded);  // for the QCY advert watcher
     WSADATA wsa;
     const bool winsock = WSAStartup(MAKEWORD(2, 2), &wsa) == 0;
     if (WaitForSingleObject(g_stopEvent, 5000) != WAIT_TIMEOUT) {
         if (winsock) WSACleanup();
+        winrt::uninit_apartment();
         return 0;
     }
 
     double lastMousePoll = -1.0;
     double lastHeadsetPoll = -1.0;
+    double lastVt883Poll = -1.0;
+    double lastHeadsetValueAt = -1e9;
     bool mouseArmed = true;
     bool headsetArmed = true;
     do {
         const double now = NowSeconds();
         const bool tabVisible = now - g_batteryTabDrawnAt.load(std::memory_order_relaxed) < 2.0;
+        // VT-883 is only a device-list lookup, so refresh it often while the tab is open.
+        if (lastVt883Poll < 0.0 || now - lastVt883Poll >= (tabVisible ? 3.0 : 60.0)) {
+            lastVt883Poll = now;
+            PeripheralBattery vt883;
+            ReadVt883MouseConnected(&vt883);
+            bool changed;
+            {
+                std::lock_guard lock(g_peripheralBatteryMutex);
+                changed = g_vt883Battery.connected != vt883.connected;
+                g_vt883Battery = vt883;
+            }
+            if (changed) g_layoutDirty = true;
+        }
         const bool pollMouse = lastMousePoll < 0.0 || now - lastMousePoll >= 60.0;
-        const bool pollHeadset = winsock && (lastHeadsetPoll < 0.0 ||
+        const bool headsetJustConnected = g_headsetPollNow.load() > 0;
+        const bool pollHeadset = winsock && (headsetJustConnected || lastHeadsetPoll < 0.0 ||
                                              now - lastHeadsetPoll >= (tabVisible ? 60.0 : 300.0));
         if (!pollMouse && !pollHeadset) {
             continue;
@@ -7256,11 +7387,30 @@ DWORD WINAPI PeripheralBatteryThreadProc(void*) {
                 g_mouseBattery = mouse;
             }
             if (pollHeadset) {
-                if (headset.connected && headset.percent < 0 && g_headsetBattery.connected) {
+                // Keep the last value through a failed read, but not for long: an old
+                // value kept forever is how the tab showed 60% with the headset at 30%.
+                if (headset.percent >= 0) {
+                    lastHeadsetValueAt = now;
+                } else if (headset.connected && g_headsetBattery.connected && now - lastHeadsetValueAt < 900.0) {
                     headset.percent = g_headsetBattery.percent;
+                    headset.charging = g_headsetBattery.charging;
                 }
                 g_headsetBattery = headset;
             }
+        }
+        if (pollHeadset && headset.percent >= 0) {
+            g_headsetLastPercent = headset.percent;
+            g_headsetPollNow = 0;
+            // The connect card may be up with no value (or the old one): show the real level.
+            std::lock_guard lock(g_stateMutex);
+            BluetoothDeviceSnapshot& card = g_state.bluetoothDevice;
+            if (card.active && card.connected && !card.lowBattery &&
+                card.deviceName.find(L"QCY H3") != std::wstring::npos) {
+                card.batteryPercent = headset.percent;
+                TriggerNudge();
+            }
+        } else if (headsetJustConnected) {
+            --g_headsetPollNow;  // the link may not be up yet: try again next second
         }
 
         const int threshold = GetSettingsCopy().peripheralBatteryAlert;
@@ -7278,6 +7428,7 @@ DWORD WINAPI PeripheralBatteryThreadProc(void*) {
     } while (WaitForSingleObject(g_stopEvent, 1000) == WAIT_TIMEOUT);
 
     if (winsock) WSACleanup();
+    winrt::uninit_apartment();
     return 0;
 }
 
@@ -14701,18 +14852,34 @@ class Renderer {
         return material_.accent;
     }
 
-    // Local patch (battery tab): BK-R1X mouse and QCY H3 headset, one card each,
-    // styled like the Hardware Monitor cards. Data comes from PeripheralBatteryThreadProc.
+    // Local patch (battery tab): BK-R1X mouse, VT-883 mouse and QCY H3 headset, one
+    // card each, styled like the Hardware Monitor cards. Disconnected devices are
+    // hidden unless the setting asks for them. Data comes from PeripheralBatteryThreadProc.
     void DrawPeripheralBatteryDashboard(D2D1_RECT_F rect, float scale) {
         g_batteryTabDrawnAt.store(NowSeconds(), std::memory_order_relaxed);
-        PeripheralBattery devices[2];
+        PeripheralBattery all[3];
         {
             std::lock_guard lock(g_peripheralBatteryMutex);
-            devices[0] = g_mouseBattery;
-            devices[1] = g_headsetBattery;
+            all[0] = g_mouseBattery;
+            all[1] = g_vt883Battery;
+            all[2] = g_headsetBattery;
         }
-        const wchar_t* names[2] = {L"Mouse BK-R1X", L"Headset QCY H3"};
-        const BluetoothDeviceCategory icons[2] = {BluetoothDeviceCategory::Mouse, BluetoothDeviceCategory::Headphones};
+        const wchar_t* allNames[3] = {L"Mouse BK-R1X", L"Mouse VT-883", L"Headset QCY H3"};
+        const BluetoothDeviceCategory allIcons[3] = {BluetoothDeviceCategory::Mouse, BluetoothDeviceCategory::Mouse,
+                                                     BluetoothDeviceCategory::Headphones};
+        const bool showDisconnected = GetSettingsCopy().peripheralBatteryShowDisconnected;
+        PeripheralBattery devices[3];
+        const wchar_t* names[3];
+        BluetoothDeviceCategory icons[3];
+        int count = 0;
+        for (int i = 0; i < 3; ++i) {
+            if (all[i].connected || showDisconnected) {
+                devices[count] = all[i];
+                names[count] = allNames[i];
+                icons[count] = allIcons[i];
+                ++count;
+            }
+        }
 
         const float padX = 24.0f * scale;
         textBrush_->SetOpacity(0.96f);
@@ -14726,10 +14893,21 @@ class Renderer {
             boldTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         }
 
-        const float rowH = 50.0f * scale;
         const float rowGap = 8.0f * scale;
         const float gridTop = rect.top + 40.0f * scale;
-        for (int i = 0; i < 2; ++i) {
+        if (count == 0 && smallTextFormat_) {
+            const wchar_t* empty = L"Nenhum mouse ou headset conectado";
+            smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            mutedBrush_->SetOpacity(0.60f);
+            target_->DrawTextW(empty, static_cast<UINT32>(wcslen(empty)), smallTextFormat_.Get(),
+                               D2D1::RectF(rect.left + padX, gridTop, rect.right - padX, gridTop + 20.0f * scale),
+                               mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        }
+        // Three cards don't fit the expanded island at full height: shrink them to fit.
+        const float fitH = count > 0 ? (rect.bottom - 10.0f * scale - gridTop - rowGap * (count - 1)) / count : 0.0f;
+        const float rowH = std::clamp(fitH, 40.0f * scale, 50.0f * scale);
+        const float squeeze = 50.0f * scale - rowH;  // moves the texts up so they clear the bar
+        for (int i = 0; i < count; ++i) {
             const PeripheralBattery& d = devices[i];
             const float top = gridTop + static_cast<float>(i) * (rowH + rowGap);
             const D2D1_RECT_F card = D2D1::RectF(rect.left + padX, top, rect.right - padX, top + rowH);
@@ -14746,7 +14924,7 @@ class Renderer {
             if (!d.connected) {
                 wcscpy_s(value, L"Desconectado");
             } else if (!hasValue) {
-                wcscpy_s(value, L"--");
+                wcscpy_s(value, L"Conectado");
             } else {
                 swprintf_s(value, L"%d%%%ls", d.percent, d.charging ? L" · carregando" : L"");
             }
@@ -14758,7 +14936,8 @@ class Renderer {
                 smallTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                 mutedBrush_->SetOpacity(0.60f);
                 target_->DrawTextW(names[i], static_cast<UINT32>(wcslen(names[i])), smallTextFormat_.Get(),
-                                   D2D1::RectF(textLeft, card.top + 5.0f * scale, textRight, card.top + 19.0f * scale),
+                                   D2D1::RectF(textLeft, card.top + 5.0f * scale - squeeze * 0.1f, textRight,
+                                               card.top + 19.0f * scale - squeeze * 0.1f),
                                    mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
                 smallTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
             }
@@ -14767,7 +14946,8 @@ class Renderer {
                 textFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                 textBrush_->SetOpacity(hasValue ? 0.95f : 0.55f);
                 target_->DrawTextW(value, static_cast<UINT32>(wcslen(value)), textFormat_.Get(),
-                                   D2D1::RectF(textLeft, card.top + 18.0f * scale, textRight, card.top + 38.0f * scale),
+                                   D2D1::RectF(textLeft, card.top + 18.0f * scale - squeeze * 0.2f, textRight,
+                                               card.top + 38.0f * scale - squeeze * 0.8f),
                                    textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
                 textFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
             }

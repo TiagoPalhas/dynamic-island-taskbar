@@ -26,8 +26,17 @@ Fork of Dynamic Island for Windows 1.4.0 by devcode90.*
 - **Aba Bateria** (1.1.0): mostra a bateria do mouse **BK-R1X** e do headset **QCY H3**,
   com barra que fica âmbar abaixo de 25% e vermelha abaixo de 10%.
   - O mouse é lido pelo comando HID do próprio fabricante.
-  - O headset é lido por uma conexão RFCOMM própria com o fone, que funciona mesmo com
-    o Hands-Free (viva-voz) desligado no Windows e não cria dispositivo de áudio de chamada.
+  - O headset é lido pelo anúncio BLE que ele mesmo transmite (1.2.0), de 1 em 1% e
+    com indicação de carregamento, sem abrir conexão com o fone. Se o anúncio não
+    chegar, usa uma conexão RFCOMM própria com o fone (de 10 em 10%), que funciona
+    mesmo com o Hands-Free (viva-voz) desligado e não cria dispositivo de áudio de chamada.
+  - Mouse **VICTORY VT-883** (1.2.0), no receptor YICHIP: aparece como conectado quando
+    o receptor está no PC. Esse mouse não envia a bateria ao receptor.
+  - Mostra só os aparelhos conectados (1.2.0). Uma configuração permite mostrar
+    também os desconectados.
+- **Bateria certa no aviso de conexão** (1.2.0): o cartão "Bluetooth Conectado/Desconectado"
+  do QCY H3 usa a leitura real do fone. Com o Hands-Free desligado, o valor que o
+  Windows guarda fica congelado.
 - **Aviso de bateria baixa** (1.1.0): quando o mouse ou o headset chega na porcentagem
   escolhida (padrão 10%), aparece um aviso que pulsa suavemente em vermelho. O número de
   pulsos também é configurável (padrão 1).
@@ -72,6 +81,7 @@ Já vem pronto para a barra; os outros valores são os do original.
 | Aviso de Não perturbe | Desligado | Menos alertas na barra |
 | Aviso de bateria baixa (mouse e headset) | 10 | Porcentagem do aviso; 0 desliga |
 | Pulsos vermelhos do aviso de bateria baixa | 1 | Quantas vezes o aviso pulsa (0 a 10) |
+| Mostrar dispositivos desconectados na aba Bateria | Desligado | A aba lista só o que está conectado |
 
 ## Limitações
 
@@ -80,10 +90,12 @@ Já vem pronto para a barra; os outros valores são os do original.
 - Em capturas com a Ferramenta de Captura (Win+Shift+S), a ilha aparece atrás da barra.
   Isso é de propósito no original, para não cobrir a tela de recorte.
 - Feito para a barra embaixo; com a barra em outro lado, usa o posicionamento original.
-- A aba Bateria e o aviso de bateria baixa só reconhecem o mouse BK-R1X e um headset
-  QCY H3 específico (o endereço Bluetooth está fixo no código). Com outros aparelhos,
-  a aba mostra "Desconectado" e o aviso não aparece.
-- O headset informa a bateria de 10 em 10% e não diz quando está carregando.
+- A aba Bateria e o aviso de bateria baixa só reconhecem o mouse BK-R1X, o mouse VT-883
+  e um headset QCY H3 específico (o endereço Bluetooth está fixo no código). Outros
+  aparelhos não aparecem na aba.
+- O VT-883 não informa a bateria, então não tem porcentagem nem aviso de bateria baixa.
+- O headset anuncia a bateria a cada 6 segundos, mais ou menos. Ao conectar, o aviso
+  mostra primeiro o último valor lido e troca pelo atual assim que ele chega.
 
 ## Créditos
 
