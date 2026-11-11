@@ -1,12 +1,13 @@
 // ==WindhawkMod==
 // @id              dynamic-island-taskbar
 // @name            Dynamic Island na Barra de Tarefas
-// @description     Dynamic Island docked inside the Windows 11 taskbar: media controls on the collapsed pill, alerts that open to the right, follows the taskbar, mouse/headset battery tab and low battery alert, settings in Brazilian Portuguese. Fork of Dynamic Island for Windows 1.4.0.
-// @version         1.2.0
+// @description     Dynamic Island built into the Windows 11 taskbar (runs in Explorer, owned by the taskbar window): media controls on the collapsed pill, alerts that open to the right, follows the taskbar, mouse/headset battery tab and low battery alert, settings in Brazilian Portuguese. Fork of Dynamic Island for Windows 1.4.0.
+// @version         2.0.0
 // @author          Tiago Palhas (fork of Dynamic Island for Windows by devcode90)
 // @github          https://github.com/TiagoPalhas
 // @homepage        https://github.com/TiagoPalhas/dynamic-island-taskbar
-// @include         windhawk.exe
+// @include         explorer.exe
+// @architecture    x86-64
 // @compilerOptions -lole32 -loleaut32 -lshcore -ld2d1 -ldwrite -ldwmapi -lgdi32 -luser32 -lshell32 -lruntimeobject -lwindowscodecs -lsetupapi -lwinhttp -lpdh -lwinmm -lws2_32 -lbthprops
 // @license         MIT
 // ==/WindhawkMod==
@@ -20,6 +21,11 @@ contributors (MIT license, credits below), adapted to live inside the Windows 11
 taskbar. Every change in the source is marked with a `Local patch` comment.
 
 What this fork changes:
+- Part of the taskbar (2.0.0): runs inside the explorer.exe that owns the taskbar,
+  and the island is an owned window of the taskbar. Windows keeps it right above
+  the taskbar, it goes under fullscreen apps together with the taskbar, and it
+  comes back on its own when Explorer restarts or rebuilds the taskbar. No more
+  topmost tug-of-war with the taskbar.
 - Docks in the taskbar: anchored to the real taskbar window, vertically centred,
   and slides away with it when the taskbar auto-hides.
 - Stays above the taskbar: a foreground hook re-raises the island the moment the
@@ -36,8 +42,10 @@ What this fork changes:
   command) and a QCY H3 headset (read over its own RFCOMM link, so it works with
   Hands-Free turned off). Both devices are fixed in the source.
 - QCY H3 battery from its BLE advertisement (1.2.0): exact 1% level with the
-  charging flag, read for up to 8 s per poll; the Hands-Free route (10% steps)
-  is only the fallback, and a value older than 15 min is no longer shown. The
+  charging flag. Read with a passive scan (listen only) of up to 5 s every 10 min,
+  every 2 min with the tab open (1.2.1: less radio time taken from the audio).
+  The Hands-Free route (10% steps) is only tried after 30 min without an advert,
+  and a value older than 15 min is no longer shown. The
   Bluetooth connect/disconnect card uses the same reading for the headset
   instead of Windows' battery property, which stays frozen with Hands-Free off.
 - VICTORY VT-883 mouse (1.2.0) on its YICHIP receiver (VID 3151 PID 3020): shown
@@ -663,6 +671,7 @@ We love community contributions! To ensure high-quality updates, please follow t
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <functional>  // Local patch (taskbar integration): CreateModThread
 #include <optional>
 #include <string>
 #include <string_view>
@@ -713,6 +722,7 @@ constexpr UINT WM_APP_MOUSE_WAKE = WM_APP + 0x446;
 // thread, so hotkey and backdrop changes are posted across and applied there.
 constexpr UINT WM_APP_APPLY_HOTKEY = WM_APP + 0x447;
 constexpr UINT WM_APP_APPLY_BACKDROP = WM_APP + 0x448;
+constexpr UINT WM_APP_TASKBAR_ZORDER = WM_APP + 0x449;  // Local patch (taskbar integration)
 constexpr int ID_HIDE_SHOW_HOTKEY = 1;
 constexpr int ID_LOOKUP_HOTKEY = 2;
 constexpr float kRenderPadX = 28.0f;
@@ -1768,6 +1778,74 @@ SharedState g_state;
 std::atomic<uint64_t> g_artGenerationCounter = 0;
 
 HWND g_hwnd = nullptr;
+
+// Local patch (taskbar integration, 2.0.0): the mod runs inside the explorer.exe that
+// owns the taskbar, and the island and its backdrop windows are owned by the taskbar
+// window. Windows keeps owned windows above their owner, so the island follows the
+// taskbar's z-order (above it, under fullscreen apps with it) with no topmost fights.
+HWND g_taskbarOwner = nullptr;
+
+// explorer.exe runs with the user's locale (pt-BR: decimal comma), which the CRT
+// number parsers follow, so settings and JSON numbers are parsed with the C locale.
+inline _locale_t CLocale() {
+    static const _locale_t locale = _create_locale(LC_NUMERIC, "C");
+    return locale;
+}
+inline double ParseDoubleC(const char* s, char** end = nullptr) {
+    return CLocale() ? _strtod_l(s, end, CLocale()) : strtod(s, end);
+}
+inline double ParseDoubleC(const wchar_t* s, wchar_t** end = nullptr) {
+    return CLocale() ? _wcstod_l(s, end, CLocale()) : wcstod(s, end);
+}
+
+extern "C" IMAGE_DOS_HEADER __ImageBase;
+// Window classes and threads belong to this DLL, not to explorer.exe: the mod is
+// unloaded from a process that keeps running.
+inline HINSTANCE ModuleInstance() {
+    return reinterpret_cast<HINSTANCE>(&__ImageBase);
+}
+
+// Every thread holds a reference on this DLL and drops it with
+// FreeLibraryAndExitThread, so turning the mod off never unloads code a thread is
+// still running (inside explorer.exe that would take the taskbar down).
+struct ModThreadStart {
+    std::function<void()> body;
+    HMODULE module;
+};
+DWORD WINAPI ModThreadTrampoline(void* param) {
+    auto* start = static_cast<ModThreadStart*>(param);
+    const HMODULE module = start->module;
+    try {
+        start->body();
+    } catch (...) {
+    }
+    delete start;
+    FreeLibraryAndExitThread(module, 0);
+}
+HANDLE CreateModThread(std::function<void()> body, DWORD* threadId = nullptr) {
+    HMODULE module = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, reinterpret_cast<LPCWSTR>(&__ImageBase),
+                            &module)) {
+        return nullptr;
+    }
+    auto* start = new ModThreadStart{std::move(body), module};
+    HANDLE thread = CreateThread(nullptr, 0, ModThreadTrampoline, start, 0, threadId);
+    if (!thread) {
+        delete start;
+        FreeLibrary(module);
+    }
+    return thread;
+}
+inline HANDLE CreateModThread(LPTHREAD_START_ROUTINE proc, DWORD* threadId = nullptr) {
+    return CreateModThread([proc]() { proc(nullptr); }, threadId);
+}
+// Replaces std::thread(...).detach().
+inline void StartDetached(std::function<void()> body) {
+    if (HANDLE thread = CreateModThread(std::move(body))) {
+        CloseHandle(thread);
+    }
+}
+
 HANDLE g_stopEvent = nullptr;
 HANDLE g_settingsChangedEvent = nullptr;
 HANDLE g_renderThread = nullptr;
@@ -2940,7 +3018,9 @@ void LoadSettings() {
     const std::wstring scale = GetStringSettingCopy(L"Appearance.SizeScale");
     if (!scale.empty()) {
         wchar_t* end;
-        float parsedScale = wcstof(scale.c_str(), &end);
+        // Local patch (taskbar integration): in explorer.exe's pt-BR locale a plain
+        // wcstof read "0.8" as 0, so the island fell back to 1.0x, as tall as the taskbar.
+        float parsedScale = static_cast<float>(ParseDoubleC(scale.c_str(), &end));
         if (end != scale.c_str() && parsedScale > 0.1f && parsedScale < 10.0f) {
             next.sizeScale = parsedScale;
         }
@@ -3742,7 +3822,7 @@ void ClearAccent(Slot& s) {
 }
 
 HWND CreateBackdropWindow(HWND owner) {
-    HINSTANCE inst = GetModuleHandleW(nullptr);
+    HINSTANCE inst = ModuleInstance();
     if (!g_classRegistered) {
         WNDCLASSEXW wc = {};
         wc.cbSize = sizeof(wc);
@@ -3761,12 +3841,18 @@ HWND CreateBackdropWindow(HWND owner) {
     // SetForegroundWindow(island) for the right-click context menu (or Quick Lookup) would
     // bring the backdrop window in front of the island, completely covering the island's
     // content (text, icons, album art) with blur/acrylic. Unowned popups stay behind the island.
+    // Local patch (taskbar integration): docked, the backdrops are owned by the taskbar
+    // like the island, as its siblings, so they keep the taskbar's z-order too; that
+    // does not raise them over the island, which is what the note above is about.
     DWORD exStyle = WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT;
-    if (g_settings.alwaysOnTop) exStyle |= WS_EX_TOPMOST;
-    HWND hwnd = CreateWindowExW(exStyle, kClassName, L"", WS_POPUP, 0, 0, 16, 16, nullptr, nullptr,
+    if (g_settings.alwaysOnTop && !g_taskbarOwner) exStyle |= WS_EX_TOPMOST;
+    HWND hwnd = CreateWindowExW(exStyle, kClassName, L"", WS_POPUP, 0, 0, 16, 16, g_taskbarOwner, nullptr,
                                 inst, nullptr);
     if (!hwnd) return nullptr;
     DisableTransitions(hwnd);
+    // Local patch (taskbar integration): stay visible during Peek, like the taskbar.
+    const BOOL excludedFromPeek = TRUE;
+    DwmSetWindowAttribute(hwnd, DWMWA_EXCLUDED_FROM_PEEK, &excludedFromPeek, sizeof(excludedFromPeek));
     return hwnd;
 }
 
@@ -3794,7 +3880,7 @@ void DestroyAll() {
     }
     g_lastSync = {};
     if (g_classRegistered) {
-        UnregisterClassW(kClassName, GetModuleHandleW(nullptr));
+        UnregisterClassW(kClassName, ModuleInstance());
         g_classRegistered = false;
     }
 }
@@ -3812,6 +3898,9 @@ void UpdateRegion(Slot& s, int w, int h, int radius, int lift) {
 }
 
 void EnsureTopMost(Slot& s, bool wantTopMost) {
+    // Local patch (taskbar integration): an owned window gets its band from the
+    // taskbar; HWND_NOTOPMOST on it could pull the taskbar out of the topmost band.
+    if (g_taskbarOwner) return;
     if (!s.hwnd || s.topMost == wantTopMost) return;
     // Style-bit edits alone do not move a window between the topmost bands;
     // SetWindowPos with HWND_TOPMOST / HWND_NOTOPMOST is required.
@@ -4251,7 +4340,18 @@ StageLayout ComputeStageLayout(const Settings& settings, float pillW, float pill
 // z-order / owner / backdrop-region upkeep only. Position and size are NOT touched
 // here: UpdateLayeredWindow sets them together with the new pixels, so the window
 // never moves or resizes in a separate step from its content.
+void RestackAboveTaskbar(HWND island);
+
 void ApplyOverlayZOrder(HWND hwnd, int width, int height) {
+    if (g_taskbarOwner) {
+        // Local patch (taskbar integration): owned by the taskbar, Windows keeps the
+        // island right above it; only make sure it is shown with its backdrop behind.
+        SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW);
+        DwmBackdrop::EnsureBehind(hwnd);
+        RestackAboveTaskbar(hwnd);
+        return;
+    }
     HWND zOrder = g_settings.alwaysOnTop ? HWND_TOPMOST : HWND_NOTOPMOST;
 
     // Yield to the screen-clip overlay.
@@ -4305,7 +4405,49 @@ bool IsShellOwnedWindow(HWND hwnd) {
 // count, and we only act when we are still in the topmost band ourselves. That
 // keeps this from turning into a z-order tug-of-war or from stealing focus
 // surfaces away from Windows.
+// Local patch (taskbar integration): owned windows normally stay above their owner,
+// but Explorer raises the taskbar with SWP_NOOWNERZORDER, which leaves the island
+// under it. Put the island (and its backdrops) right above the taskbar again:
+// directly under whatever window sits above the taskbar, so a fullscreen app that
+// covers the taskbar still covers the island too.
+void RestackAboveTaskbar(HWND island) {
+    HWND taskbar = g_taskbarOwner;
+    if (!taskbar || !IsWindow(island) || !IsWindowVisible(island)) {
+        return;
+    }
+    // Windows above the taskbar are only the topmost band, so this walk is short.
+    for (HWND w = GetWindow(taskbar, GW_HWNDPREV); w; w = GetWindow(w, GW_HWNDPREV)) {
+        if (w == island) {
+            return;  // already above it
+        }
+    }
+    HWND above = GetWindow(taskbar, GW_HWNDPREV);
+    SetWindowPos(island, above ? above : HWND_TOPMOST, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+    DwmBackdrop::EnsureBehind(island);
+}
+
+// Runs on the taskbar's own thread after each of its messages: a z-order change of
+// the taskbar wakes the render thread, which restacks the island at once.
+HHOOK g_taskbarZOrderHook = nullptr;
+LRESULT CALLBACK TaskbarCallWndRetProc(int code, WPARAM wParam, LPARAM lParam) {
+    if (code == HC_ACTION) {
+        const auto* msg = reinterpret_cast<const CWPRETSTRUCT*>(lParam);
+        if (msg->message == WM_WINDOWPOSCHANGED && msg->hwnd == g_taskbarOwner) {
+            const auto* pos = reinterpret_cast<const WINDOWPOS*>(msg->lParam);
+            if (!(pos->flags & SWP_NOZORDER) || (pos->flags & SWP_SHOWWINDOW)) {
+                if (HWND island = g_hwnd) PostMessageW(island, WM_APP_TASKBAR_ZORDER, 0, 0);
+            }
+        }
+    }
+    return CallNextHookEx(nullptr, code, wParam, lParam);
+}
+
 void EnsureTopmost(HWND hwnd, const RECT* pillScreenRect = nullptr) {
+    if (g_taskbarOwner) {
+        RestackAboveTaskbar(hwnd);  // Local patch (taskbar integration)
+        return;
+    }
     if (!g_settings.alwaysOnTop || !IsWindow(hwnd) || !IsWindowVisible(hwnd)) {
         return;
     }
@@ -6403,7 +6545,7 @@ void HandleBluetoothConnected(
     // value shows up and this connection is still the one being displayed,
     // patch it into the live state and re-render.
     if (g_settings.bluetoothShowBattery && snapshot.batteryPercent < 0) {
-        std::thread([deviceId, myGeneration]() {
+        StartDetached([deviceId, myGeneration]() {
             winrt::init_apartment(winrt::apartment_type::multi_threaded);
             for (int attempt = 0; attempt < 6; ++attempt) {
                 Sleep(1500);
@@ -6424,7 +6566,7 @@ void HandleBluetoothConnected(
                 }
             }
             winrt::uninit_apartment();
-        }).detach();
+        });
     }
 }
 
@@ -6553,6 +6695,22 @@ DWORD WINAPI BluetoothThreadProc(void*) {
         try {
             watcher.Stop();
         } catch (...) {
+        }
+    }
+    // Local patch (taskbar integration): Stop() is asynchronous and the handlers use
+    // this thread's locals, so wait until the watchers report they are done.
+    for (auto& watcher : watchers) {
+        for (int i = 0; i < 40; ++i) {
+            try {
+                const auto status = watcher.Status();
+                if (status == winrt::Windows::Devices::Enumeration::DeviceWatcherStatus::Stopped ||
+                    status == winrt::Windows::Devices::Enumeration::DeviceWatcherStatus::Aborted) {
+                    break;
+                }
+            } catch (...) {
+                break;
+            }
+            Sleep(50);
         }
     }
 
@@ -7144,7 +7302,7 @@ constexpr BTH_ADDR kQcyH3Address = 0x84AC60D80979ULL;
 // data, company 0x521C: byte 5 = battery 0..100 in 1% steps, bit 7 = charging;
 // bytes 11..16 = the classic address in the order [12][11][13][16][15][14].
 // Windows gets nothing from it, but it is the exact level the QCY app shows and
-// needs no connection. Listens for up to 8 s; returns false when nothing came.
+// needs no connection. Listens for up to 5 s; returns false when nothing came.
 bool ReadQcyAdvertisedBattery(PeripheralBattery* out) {
     using namespace winrt::Windows::Devices::Bluetooth::Advertisement;
     struct Shared {
@@ -7156,7 +7314,9 @@ bool ReadQcyAdvertisedBattery(PeripheralBattery* out) {
     auto shared = std::make_shared<Shared>();  // the callback may still run after Stop()
     try {
         BluetoothLEAdvertisementWatcher watcher;
-        watcher.ScanningMode(BluetoothLEScanningMode::Active);
+        // Passive: only listens. Active scan requests share the one radio with the
+        // A2DP stream, and on a weak Bluetooth 4.0 adapter that drops the audio.
+        watcher.ScanningMode(BluetoothLEScanningMode::Passive);
         watcher.Received([shared](auto const&, BluetoothLEAdvertisementReceivedEventArgs const& args) {
             for (auto const& m : args.Advertisement().ManufacturerData()) {
                 auto data = m.Data();
@@ -7177,7 +7337,7 @@ bool ReadQcyAdvertisedBattery(PeripheralBattery* out) {
         });
         watcher.Start();
         HANDLE waits[] = {shared->got, g_stopEvent};
-        WaitForMultipleObjects(2, waits, FALSE, 8000);  // it advertises about every 6 s
+        WaitForMultipleObjects(2, waits, FALSE, 5000);  // it advertises about every 2 s
         watcher.Stop();
     } catch (winrt::hresult_error const& e) {
         Wh_Log(L"QCY advert scan failed: 0x%08X", static_cast<unsigned>(e.code()));
@@ -7190,7 +7350,9 @@ bool ReadQcyAdvertisedBattery(PeripheralBattery* out) {
     return true;
 }
 
-bool ReadQcyHeadsetBattery(PeripheralBattery* out) {
+// allowHandsFree: the RFCOMM fallback opens a link on the radio the audio uses,
+// so it only runs when the advert has not given a value for a while.
+bool ReadQcyHeadsetBattery(PeripheralBattery* out, bool allowHandsFree) {
     BLUETOOTH_DEVICE_INFO info = {sizeof(info)};
     info.Address.ullLong = kQcyH3Address;
     if (BluetoothGetDeviceInfo(nullptr, &info) != ERROR_SUCCESS || !info.fConnected) {
@@ -7201,6 +7363,9 @@ bool ReadQcyHeadsetBattery(PeripheralBattery* out) {
     out->charging = false;
     if (ReadQcyAdvertisedBattery(out)) {
         return true;  // exact level; the Hands-Free route below only gives 10% steps
+    }
+    if (!allowHandsFree) {
+        return true;
     }
 
     SOCKET s = socket(AF_BTH, SOCK_STREAM, BTHPROTO_RFCOMM);
@@ -7325,8 +7490,9 @@ bool CheckPeripheralLowBattery(const PeripheralBattery& d, int threshold, bool* 
     return true;
 }
 
-// Mouse every 60 s (one HID round trip). Headset every 5 min in the background,
-// every 60 s while the battery tab is on screen, so it sees few RFCOMM connects.
+// Mouse every 60 s (one HID round trip). Headset every 10 min in the background,
+// every 2 min while the battery tab is on screen: each read is a short passive BLE
+// listen, kept rare because the radio is shared with the headset's audio.
 DWORD WINAPI PeripheralBatteryThreadProc(void*) {
     winrt::init_apartment(winrt::apartment_type::multi_threaded);  // for the QCY advert watcher
     WSADATA wsa;
@@ -7362,7 +7528,7 @@ DWORD WINAPI PeripheralBatteryThreadProc(void*) {
         const bool pollMouse = lastMousePoll < 0.0 || now - lastMousePoll >= 60.0;
         const bool headsetJustConnected = g_headsetPollNow.load() > 0;
         const bool pollHeadset = winsock && (headsetJustConnected || lastHeadsetPoll < 0.0 ||
-                                             now - lastHeadsetPoll >= (tabVisible ? 60.0 : 300.0));
+                                             now - lastHeadsetPoll >= (tabVisible ? 120.0 : 600.0));
         if (!pollMouse && !pollHeadset) {
             continue;
         }
@@ -7374,7 +7540,7 @@ DWORD WINAPI PeripheralBatteryThreadProc(void*) {
         }
         if (pollHeadset) {
             lastHeadsetPoll = now;
-            ReadQcyHeadsetBattery(&headset);
+            ReadQcyHeadsetBattery(&headset, now - lastHeadsetValueAt >= 1800.0);
         }
         {
             std::lock_guard lock(g_peripheralBatteryMutex);
@@ -7522,7 +7688,7 @@ DWORD WINAPI WeatherThreadProc(void*) {
                 if (tempStr) {
                     tempStr += 9;
                     while (*tempStr == ' ' || *tempStr == '\"') tempStr++;
-                    sscanf(tempStr, "%f", &temp);
+                    temp = static_cast<float>(ParseDoubleC(tempStr));  // Local patch: C locale
                 }
                 const char* codeStr = strstr(currentStr, "\"weatherCode\":");
                 if (codeStr) {
@@ -8686,7 +8852,7 @@ bool ExtractJsonNumberField(const std::string& json, const char* key, double* ou
     pos += k.size();
     while (pos < json.size() && json[pos] == ' ') ++pos;
     if (pos >= json.size() || (json[pos] != '-' && (json[pos] < '0' || json[pos] > '9'))) return false;
-    *out = strtod(json.c_str() + pos, nullptr);
+    *out = ParseDoubleC(json.c_str() + pos);  // Local patch: C locale
     return true;
 }
 
@@ -9980,7 +10146,7 @@ void CaptureShellNotification(HWND hwnd) {
 
     // Spawn a background thread to extract the full rich text body of the toast using UI Automation.
     // Modern Windows Toasts often only provide the App Name via GetWindowTextW, leaving the body hidden in the XAML tree.
-    std::thread([hwnd]() {
+    StartDetached([hwnd]() {
         try {
             Sleep(400); // Give the heavy UWP XAML tree enough time to fully construct the text nodes
             if (!IsWindow(hwnd)) return;
@@ -10059,7 +10225,7 @@ void CaptureShellNotification(HWND hwnd) {
             }
         } catch (...) {
         }
-    }).detach();
+    });
 }
 
 void CaptureClipboard(HWND hwnd) {
@@ -11059,7 +11225,7 @@ void SubmitLookup(const std::wstring& rawText) {
 
     // The query text is deliberately not logged.
     Wh_Log(L"Quick Lookup: request started.");
-    std::thread([id, query, key]() {
+    StartDetached([id, query, key]() {
         try {
             QuickLookup::Result result;
             const QuickLookup::Outcome outcome = QuickLookup::LookupText(query, &result);
@@ -11071,7 +11237,7 @@ void SubmitLookup(const std::wstring& rawText) {
         } catch (...) {
             Wh_Log(L"Quick Lookup: lookup threw an exception.");
         }
-    }).detach();
+    });
 }
 
 void SubmitLookupSelection() {
@@ -11492,7 +11658,7 @@ void ToggleEndpointMute() {
 
 // Shared by the scrubber's live drag updates and its on-release commit.
 void SeekMediaToTicks(int64_t targetTicks) {
-    std::thread([targetTicks]() {
+    StartDetached([targetTicks]() {
         winrt::init_apartment(winrt::apartment_type::multi_threaded);
         try {
             using Manager = winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager;
@@ -11518,7 +11684,7 @@ void SeekMediaToTicks(int64_t targetTicks) {
                 }
             }
         } catch (...) {}
-    }).detach();
+    });
 }
 
 // Resolves the SMTC session matching the island's current media source, falling
@@ -11558,7 +11724,7 @@ winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSession Resolv
 // play/pause straight back. The keys are only synthesized when SMTC could not
 // act at all, where there is nothing to double-drive and no better option.
 void SendMediaTransportCommand(int cmd) {
-    std::thread([cmd]() {
+    StartDetached([cmd]() {
         winrt::init_apartment(winrt::apartment_type::multi_threaded);
 
         bool sessionAttempted = false;
@@ -11601,7 +11767,7 @@ void SendMediaTransportCommand(int cmd) {
             keybd_event(vk, 0, KEYEVENTF_EXTENDEDKEY, 0);
             keybd_event(vk, 0, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, 0);
         }
-    }).detach();
+    });
 }
 
 struct WindowSearch {
@@ -12071,24 +12237,28 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
             // would have spawned another mod host instead of opening settings.
             // Taking the directory and appending windhawk.exe is correct on both,
             // since the two executables live side by side.
+            // Local patch (taskbar integration): the mod now runs in explorer.exe, so
+            // start from the Windhawk engine DLL (<Windhawk>\Engine\<ver>\64\windhawk.dll)
+            // and walk up to the folder that has windhawk.exe.
             wchar_t windhawkPath[MAX_PATH] = {};
-            const DWORD pathLen =
-                GetModuleFileNameW(nullptr, windhawkPath, ARRAYSIZE(windhawkPath));
+            const DWORD pathLen = GetModuleFileNameW(GetModuleHandleW(L"windhawk.dll"), windhawkPath,
+                                                     ARRAYSIZE(windhawkPath));
             if (pathLen == 0 || pathLen >= ARRAYSIZE(windhawkPath)) {
                 Wh_Log(L"Could not resolve the Windhawk directory (GetModuleFileNameW: %lu).",
                        pathLen);
                 break;
             }
-
-            wchar_t* lastSlash = wcsrchr(windhawkPath, L'\\');
-            if (!lastSlash) {
-                Wh_Log(L"Unexpected module path with no directory separator.");
-                break;
+            bool foundExe = false;
+            for (int level = 0; level < 5 && !foundExe; ++level) {
+                wchar_t* lastSlash = wcsrchr(windhawkPath, L'\\');
+                if (!lastSlash) break;
+                *(lastSlash + 1) = L'\0';  // keep the trailing slash
+                if (wcscat_s(windhawkPath, ARRAYSIZE(windhawkPath), L"windhawk.exe") != 0) break;
+                foundExe = GetFileAttributesW(windhawkPath) != INVALID_FILE_ATTRIBUTES;
+                if (!foundExe) *lastSlash = L'\0';  // up one folder for the next try
             }
-            *(lastSlash + 1) = L'\0';  // keep the trailing slash
-
-            if (wcscat_s(windhawkPath, ARRAYSIZE(windhawkPath), L"windhawk.exe") != 0) {
-                Wh_Log(L"Windhawk directory path is too long to append the executable name.");
+            if (!foundExe) {
+                Wh_Log(L"Could not find windhawk.exe next to the Windhawk engine.");
                 break;
             }
 
@@ -23511,15 +23681,17 @@ DWORD WINAPI RenderThreadProc(void*) {
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof(wc);
     wc.lpfnWndProc = OverlayWndProc;
-    wc.hInstance = GetModuleHandleW(nullptr);
+    wc.hInstance = ModuleInstance();
     wc.lpszClassName = kWindowClass;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     RegisterClassExW(&wc);
 
+    // Local patch (taskbar integration): owned by the taskbar instead of topmost.
     HWND hwnd = CreateWindowExW(
-        WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
+        WS_EX_LAYERED | (g_taskbarOwner ? 0 : WS_EX_TOPMOST) | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE |
+            WS_EX_TRANSPARENT,
         kWindowClass, L"Dynamic Island for Windows", WS_POPUP, 0, 0, 520, 140,
-        nullptr, nullptr, wc.hInstance, nullptr);
+        g_taskbarOwner, nullptr, wc.hInstance, nullptr);
 
     if (!hwnd) {
         Wh_Log(L"Failed to create Dynamic Island overlay window.");
@@ -23530,11 +23702,23 @@ DWORD WINAPI RenderThreadProc(void*) {
     }
 
     g_hwnd = hwnd;
+    {
+        // Local patch (taskbar integration): Peek (hovering a taskbar thumbnail) hides
+        // every window except the peeked one and the taskbar; keep the island too.
+        const BOOL excludedFromPeek = TRUE;
+        DwmSetWindowAttribute(hwnd, DWMWA_EXCLUDED_FROM_PEEK, &excludedFromPeek, sizeof(excludedFromPeek));
+    }
     // Local patch: same foreground hook Island Media Controls uses to keep up with
     // the taskbar. Out-of-context, delivered through this thread's message pump.
-    HWINEVENTHOOK foregroundHook = SetWinEventHook(
+    HWINEVENTHOOK foregroundHook = g_taskbarOwner ? nullptr : SetWinEventHook(
         EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr,
         TaskbarDock::OnForegroundChanged, 0, 0, WINEVENT_OUTOFCONTEXT);
+    // Local patch (taskbar integration): hear about every taskbar z-order change.
+    if (g_taskbarOwner) {
+        g_taskbarZOrderHook = SetWindowsHookExW(WH_CALLWNDPROCRET, TaskbarCallWndRetProc, ModuleInstance(),
+                                                GetWindowThreadProcessId(g_taskbarOwner, nullptr));
+        if (!g_taskbarZOrderHook) Wh_Log(L"Taskbar z-order hook failed (%lu).", GetLastError());
+    }
     if (g_shellHookMessage == 0) g_shellHookMessage = RegisterWindowMessageW(L"SHELLHOOK");
     if (g_taskbarCreatedMessage == 0) g_taskbarCreatedMessage = RegisterWindowMessageW(L"TaskbarCreated");
     using ChangeWindowMessageFilterEx_t = BOOL(WINAPI*)(HWND, UINT, DWORD, PVOID);
@@ -23571,6 +23755,10 @@ DWORD WINAPI RenderThreadProc(void*) {
     Renderer renderer;
     if (!renderer.Initialize(hwnd)) {
         if (foregroundHook) UnhookWinEvent(foregroundHook);  // Local patch
+        if (g_taskbarZOrderHook) {
+            UnhookWindowsHookEx(g_taskbarZOrderHook);
+            g_taskbarZOrderHook = nullptr;
+        }
         DestroyWindow(hwnd);
         g_hwnd = nullptr;
         if (SUCCEEDED(hrCo)) {
@@ -23641,8 +23829,19 @@ DWORD WINAPI RenderThreadProc(void*) {
 
     static double lastInteractionTime = NowSeconds();
     while (WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
+        // Local patch (taskbar integration): owned windows die with their owner. If
+        // Explorer rebuilds the taskbar, end this thread; the supervisor starts the
+        // island again on the new taskbar.
+        if (!IsWindow(hwnd)) {
+            Wh_Log(L"Taskbar went away; island window destroyed with it.");
+            break;
+        }
         MSG message = {};
         while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+            if (message.message == WM_APP_TASKBAR_ZORDER) {
+                RestackAboveTaskbar(hwnd);  // Local patch (taskbar integration)
+                continue;
+            }
             if (message.message == WM_APP_NEW_EVENT) {
                 nudgeSpring.value = -6.0f;
                 nudgeSpring.velocity = 0.0f;
@@ -24616,6 +24815,10 @@ DWORD WINAPI RenderThreadProc(void*) {
 
     UnbindVolumeEndpoint();
     if (foregroundHook) UnhookWinEvent(foregroundHook);  // Local patch
+    if (g_taskbarZOrderHook) {  // Local patch (taskbar integration)
+        UnhookWindowsHookEx(g_taskbarZOrderHook);
+        g_taskbarZOrderHook = nullptr;
+    }
     DwmBackdrop::DestroyAll();
     renderer.Shutdown();
     DestroyWindow(hwnd);
@@ -24640,22 +24843,22 @@ bool StartThreads() {
     }
 
     g_running = true;
-    g_renderThread = CreateThread(nullptr, 0, RenderThreadProc, nullptr, 0, nullptr);
+    g_renderThread = CreateModThread(RenderThreadProc);
     if (!g_renderThread) {
         return false;
     }
 
-    g_mediaThread = CreateThread(nullptr, 0, MediaThreadProc, nullptr, 0, nullptr);
-    g_audioThread = CreateThread(nullptr, 0, AudioThreadProc, nullptr, 0, nullptr);
-    g_weatherThread = CreateThread(nullptr, 0, WeatherThreadProc, nullptr, 0, nullptr);
-    g_lyricsThread = CreateThread(nullptr, 0, LyricsThreadProc, nullptr, 0, nullptr);
-    g_keyboardThread = CreateThread(nullptr, 0, KeyboardThreadProc, nullptr, 0, &g_keyboardThreadId);
-    g_mouseThread = CreateThread(nullptr, 0, MouseThreadProc, nullptr, 0, &g_mouseThreadId);
+    g_mediaThread = CreateModThread(MediaThreadProc);
+    g_audioThread = CreateModThread(AudioThreadProc);
+    g_weatherThread = CreateModThread(WeatherThreadProc);
+    g_lyricsThread = CreateModThread(LyricsThreadProc);
+    g_keyboardThread = CreateModThread(KeyboardThreadProc, &g_keyboardThreadId);
+    g_mouseThread = CreateModThread(MouseThreadProc, &g_mouseThreadId);
 #if DYNAMIC_ISLAND_HAS_USER_NOTIFICATION_LISTENER
-    g_notificationThread = CreateThread(nullptr, 0, NotificationThreadProc, nullptr, 0, nullptr);
+    g_notificationThread = CreateModThread(NotificationThreadProc);
 #endif
-    g_bluetoothThread = CreateThread(nullptr, 0, BluetoothThreadProc, nullptr, 0, nullptr);
-    g_peripheralBatteryThread = CreateThread(nullptr, 0, PeripheralBatteryThreadProc, nullptr, 0, nullptr);  // Local patch (battery tab)
+    g_bluetoothThread = CreateModThread(BluetoothThreadProc);
+    g_peripheralBatteryThread = CreateModThread(PeripheralBatteryThreadProc);  // Local patch (battery tab)
     SubscribeDndNotification();
 
     return true;
@@ -24674,9 +24877,19 @@ void StopThreads() {
     }
 
     HANDLE handles[] = {g_renderThread, g_mediaThread, g_audioThread, g_weatherThread, g_lyricsThread, g_notificationThread, g_keyboardThread, g_mouseThread, g_bluetoothThread, g_peripheralBatteryThread};
+    // Local patch (taskbar integration): a thread that outlives this keeps the DLL
+    // loaded on its own reference, but it may still wait on the events below, so
+    // they are only closed once every thread is gone.
+    const ULONGLONG deadline = GetTickCount64() + 10000;
+    bool allStopped = true;
     for (HANDLE handle : handles) {
         if (handle) {
-            WaitForSingleObject(handle, 3000);
+            const ULONGLONG nowTicks = GetTickCount64();
+            const DWORD wait = nowTicks < deadline ? static_cast<DWORD>(deadline - nowTicks) : 0;
+            if (WaitForSingleObject(handle, wait) != WAIT_OBJECT_0) {
+                allStopped = false;
+                Wh_Log(L"A mod thread did not stop in time; it will finish on its own.");
+            }
             CloseHandle(handle);
         }
     }
@@ -24694,18 +24907,14 @@ void StopThreads() {
     g_bluetoothThread = nullptr;
     g_peripheralBatteryThread = nullptr;
 
-    if (g_stopEvent) {
-        CloseHandle(g_stopEvent);
-        g_stopEvent = nullptr;
-    }
-    if (g_settingsChangedEvent) {
-        CloseHandle(g_settingsChangedEvent);
-        g_settingsChangedEvent = nullptr;
-    }
-    if (g_mediaRefreshEvent) {
-        CloseHandle(g_mediaRefreshEvent);
-        g_mediaRefreshEvent = nullptr;
-    }
+    if (allStopped) {
+        if (g_stopEvent) CloseHandle(g_stopEvent);
+        if (g_settingsChangedEvent) CloseHandle(g_settingsChangedEvent);
+        if (g_mediaRefreshEvent) CloseHandle(g_mediaRefreshEvent);
+    }  // else leaked on purpose (a few bytes), see above
+    g_stopEvent = nullptr;
+    g_settingsChangedEvent = nullptr;
+    g_mediaRefreshEvent = nullptr;
 
     g_running = false;
 }
@@ -24740,180 +24949,140 @@ void WhTool_ModUninit() {
 }
 
 //////////////////////////////////////////////////////////////////////////////////
-// Windhawk tool mod implementation for mods which don't need to inject to other
-// processes or hook other functions. Context:
-// https://github.com/ramensoftware/windhawk/wiki/Mods-as-tools:-Running-mods-in-a-dedicated-process
-//
-// The mod will load and run in a dedicated windhawk.exe process.
-//
-// Paste the code below as part of the mod code, and use these callbacks:
-// * WhTool_ModInit
-// * WhTool_ModSettingsChanged
-// * WhTool_ModUninit
-//
-// Currently, other callbacks are not supported.
+// Local patch (taskbar integration, 2.0.0): Windhawk loads the mod into every
+// explorer.exe. Only the one that owns the taskbar runs the island. A supervisor
+// thread waits for the taskbar (Explorer creates it after loading the mod) and
+// starts the island again if Explorer rebuilds the taskbar without restarting.
 
-bool g_isToolModProcessLauncher;
-HANDLE g_toolModProcessMutex;
+HANDLE g_supervisorThread = nullptr;
+HANDLE g_supervisorStop = nullptr;
+std::mutex g_lifecycleMutex;  // island start/stop vs settings changes
+bool g_islandRunning = false;
 
-void WINAPI EntryPoint_Hook() {
-    Wh_Log(L">");
-    ExitThread(0);
+// The taskbar of this explorer.exe, or null. *otherProcess is set when the taskbar
+// exists but belongs to another explorer.exe (a separate File Explorer process).
+HWND FindOwnTaskbar(bool* otherProcess) {
+    *otherProcess = false;
+    HWND taskbar = FindWindowW(L"Shell_TrayWnd", nullptr);
+    if (!taskbar) {
+        return nullptr;
+    }
+    DWORD pid = 0;
+    GetWindowThreadProcessId(taskbar, &pid);
+    if (pid != GetCurrentProcessId()) {
+        *otherProcess = true;
+        return nullptr;
+    }
+    return taskbar;
+}
+
+DWORD WINAPI SupervisorThreadProc(void*) {
+    int quickFailures = 0;
+    for (;;) {
+        bool otherProcess = false;
+        HWND taskbar = nullptr;
+        while (!(taskbar = FindOwnTaskbar(&otherProcess))) {
+            if (otherProcess) {
+                Wh_Log(L"The taskbar belongs to another explorer.exe; the island runs there.");
+                return 0;
+            }
+            if (WaitForSingleObject(g_supervisorStop, 500) != WAIT_TIMEOUT) {
+                return 0;
+            }
+        }
+
+        HANDLE renderThread = nullptr;
+        {
+            std::lock_guard lock(g_lifecycleMutex);
+            if (WaitForSingleObject(g_supervisorStop, 0) != WAIT_TIMEOUT) {
+                return 0;
+            }
+            g_taskbarOwner = taskbar;
+            if (!WhTool_ModInit()) {
+                g_taskbarOwner = nullptr;
+                return 0;
+            }
+            g_islandRunning = true;
+            DuplicateHandle(GetCurrentProcess(), g_renderThread, GetCurrentProcess(), &renderThread, SYNCHRONIZE,
+                            FALSE, 0);
+        }
+        if (!renderThread) {
+            return 0;
+        }
+
+        const ULONGLONG startedAt = GetTickCount64();
+        HANDLE waits[] = {g_supervisorStop, renderThread};
+        const DWORD result = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
+        CloseHandle(renderThread);
+        if (result != WAIT_OBJECT_0 + 1) {
+            return 0;  // stopping: Wh_ModUninit shuts the island down
+        }
+
+        // The render thread ended on its own: the taskbar window was destroyed.
+        {
+            std::lock_guard lock(g_lifecycleMutex);
+            WhTool_ModUninit();
+            g_islandRunning = false;
+            g_taskbarOwner = nullptr;
+        }
+        quickFailures = GetTickCount64() - startedAt < 10000 ? quickFailures + 1 : 0;
+        if (quickFailures >= 5) {
+            Wh_Log(L"The island keeps failing to start; giving up until the mod is reloaded.");
+            return 0;
+        }
+        if (WaitForSingleObject(g_supervisorStop, 2000) != WAIT_TIMEOUT) {
+            return 0;
+        }
+    }
 }
 
 BOOL Wh_ModInit() {
     DWORD sessionId;
-    if (ProcessIdToSessionId(GetCurrentProcessId(), &sessionId) &&
-        sessionId == 0) {
+    if (ProcessIdToSessionId(GetCurrentProcessId(), &sessionId) && sessionId == 0) {
         return FALSE;
     }
-
-    bool isExcluded = false;
-    bool isToolModProcess = false;
-    bool isCurrentToolModProcess = false;
-    int argc;
-    LPWSTR* argv = CommandLineToArgvW(GetCommandLine(), &argc);
-    if (!argv) {
-        Wh_Log(L"CommandLineToArgvW failed");
+    g_supervisorStop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!g_supervisorStop) {
         return FALSE;
     }
-
-    for (int i = 1; i < argc; i++) {
-        if (wcscmp(argv[i], L"-service") == 0 ||
-            wcscmp(argv[i], L"-service-start") == 0 ||
-            wcscmp(argv[i], L"-service-stop") == 0) {
-            isExcluded = true;
-            break;
-        }
-    }
-
-    for (int i = 1; i < argc - 1; i++) {
-        if (wcscmp(argv[i], L"-tool-mod") == 0) {
-            isToolModProcess = true;
-            if (wcscmp(argv[i + 1], WH_MOD_ID) == 0) {
-                isCurrentToolModProcess = true;
-            }
-            break;
-        }
-    }
-
-    LocalFree(argv);
-
-    if (isExcluded) {
+    g_supervisorThread = CreateModThread(SupervisorThreadProc);
+    if (!g_supervisorThread) {
+        CloseHandle(g_supervisorStop);
+        g_supervisorStop = nullptr;
         return FALSE;
     }
-
-    if (isCurrentToolModProcess) {
-        g_toolModProcessMutex =
-            CreateMutex(nullptr, TRUE, L"windhawk-tool-mod_" WH_MOD_ID);
-        if (!g_toolModProcessMutex) {
-            Wh_Log(L"CreateMutex failed");
-            ExitProcess(1);
-        }
-
-        if (GetLastError() == ERROR_ALREADY_EXISTS) {
-            Wh_Log(L"Tool mod already running (%s)", WH_MOD_ID);
-            ExitProcess(1);
-        }
-
-        if (!WhTool_ModInit()) {
-            ExitProcess(1);
-        }
-
-        IMAGE_DOS_HEADER* dosHeader =
-            (IMAGE_DOS_HEADER*)GetModuleHandle(nullptr);
-        IMAGE_NT_HEADERS* ntHeaders =
-            (IMAGE_NT_HEADERS*)((BYTE*)dosHeader + dosHeader->e_lfanew);
-
-        DWORD entryPointRVA = ntHeaders->OptionalHeader.AddressOfEntryPoint;
-        void* entryPoint = (BYTE*)dosHeader + entryPointRVA;
-
-        Wh_SetFunctionHook(entryPoint, (void*)EntryPoint_Hook, nullptr);
-        return TRUE;
-    }
-
-    if (isToolModProcess) {
-        return FALSE;
-    }
-
-    g_isToolModProcessLauncher = true;
     return TRUE;
 }
 
-void Wh_ModAfterInit() {
-    if (!g_isToolModProcessLauncher) {
-        return;
-    }
-
-    WCHAR currentProcessPath[MAX_PATH];
-    switch (GetModuleFileName(nullptr, currentProcessPath,
-                              ARRAYSIZE(currentProcessPath))) {
-        case 0:
-        case ARRAYSIZE(currentProcessPath):
-            Wh_Log(L"GetModuleFileName failed");
-            return;
-    }
-
-    WCHAR
-    commandLine[MAX_PATH + 2 +
-                (sizeof(L" -tool-mod \"" WH_MOD_ID "\"") / sizeof(WCHAR)) - 1];
-    swprintf_s(commandLine, L"\"%s\" -tool-mod \"%s\"", currentProcessPath,
-               WH_MOD_ID);
-
-    HMODULE kernelModule = GetModuleHandle(L"kernelbase.dll");
-    if (!kernelModule) {
-        kernelModule = GetModuleHandle(L"kernel32.dll");
-        if (!kernelModule) {
-            Wh_Log(L"No kernelbase.dll/kernel32.dll");
-            return;
-        }
-    }
-
-    using CreateProcessInternalW_t = BOOL(WINAPI*)(
-        HANDLE hUserToken, LPCWSTR lpApplicationName, LPWSTR lpCommandLine,
-        LPSECURITY_ATTRIBUTES lpProcessAttributes,
-        LPSECURITY_ATTRIBUTES lpThreadAttributes, WINBOOL bInheritHandles,
-        DWORD dwCreationFlags, LPVOID lpEnvironment, LPCWSTR lpCurrentDirectory,
-        LPSTARTUPINFOW lpStartupInfo,
-        LPPROCESS_INFORMATION lpProcessInformation,
-        PHANDLE hRestrictedUserToken);
-    CreateProcessInternalW_t pCreateProcessInternalW =
-        (CreateProcessInternalW_t)GetProcAddress(kernelModule,
-                                                 "CreateProcessInternalW");
-    if (!pCreateProcessInternalW) {
-        Wh_Log(L"No CreateProcessInternalW");
-        return;
-    }
-
-    STARTUPINFO si{
-        .cb = sizeof(STARTUPINFO),
-        .dwFlags = STARTF_FORCEOFFFEEDBACK,
-    };
-    PROCESS_INFORMATION pi;
-    if (!pCreateProcessInternalW(nullptr, currentProcessPath, commandLine,
-                                 nullptr, nullptr, FALSE, NORMAL_PRIORITY_CLASS,
-                                 nullptr, nullptr, &si, &pi, nullptr)) {
-        Wh_Log(L"CreateProcess failed");
-        return;
-    }
-
-    CloseHandle(pi.hProcess);
-    CloseHandle(pi.hThread);
-}
-
 void Wh_ModSettingsChanged() {
-    if (g_isToolModProcessLauncher) {
-        return;
+    std::lock_guard lock(g_lifecycleMutex);
+    if (g_islandRunning) {
+        WhTool_ModSettingsChanged();
     }
-
-    WhTool_ModSettingsChanged();
 }
 
 void Wh_ModUninit() {
-    if (g_isToolModProcessLauncher) {
-        return;
+    if (g_supervisorStop) {
+        SetEvent(g_supervisorStop);
     }
-
-    WhTool_ModUninit();
-    ExitProcess(0);
+    bool supervisorStopped = true;
+    if (g_supervisorThread) {
+        supervisorStopped = WaitForSingleObject(g_supervisorThread, 15000) == WAIT_OBJECT_0;
+        CloseHandle(g_supervisorThread);
+        g_supervisorThread = nullptr;
+    }
+    {
+        std::lock_guard lock(g_lifecycleMutex);
+        if (g_islandRunning) {
+            WhTool_ModUninit();
+            g_islandRunning = false;
+        }
+        g_taskbarOwner = nullptr;
+    }
+    // The supervisor may still be inside a 15 s wait only if it hung; then keep the
+    // event alive for it (it holds its own reference on the DLL).
+    if (g_supervisorStop && supervisorStopped) {
+        CloseHandle(g_supervisorStop);
+    }
+    g_supervisorStop = nullptr;
 }
