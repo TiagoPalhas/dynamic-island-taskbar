@@ -21,6 +21,11 @@ Fork of Dynamic Island for Windows 1.4.0 by devcode90.*
   - A ilha continua visível na Espiada (ao passar o mouse sobre a miniatura de um app).
   - Volta sozinha quando o Explorer reinicia ou recria a barra.
   - Desligar o mod não derruba a barra: as threads seguram o mod carregado até terminar.
+- **Some junto com a barra** (2.0.1): com um vídeo ou jogo em tela cheia no monitor da ilha,
+  a ilha se esconde junto com a barra, mesmo com o foco em outro monitor. Ela segue o
+  estado real da barra, em vez de olhar a janela em foco. O ponto de privacidade
+  (microfone/câmera em uso) e os alertas não a mantêm mais por cima da tela cheia.
+  `Ctrl+Alt+D` mostra a ilha quando você quiser.
 - **Encaixada na barra:** segue a janela real da barra de tarefas, fica centralizada
   na altura dela e desliza junto quando a barra se oculta automaticamente.
 - **Números com ponto em qualquer idioma** (2.0.0): o tamanho da ilha, o clima e as

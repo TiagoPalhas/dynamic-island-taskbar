@@ -2,7 +2,7 @@
 // @id              dynamic-island-taskbar
 // @name            Dynamic Island na Barra de Tarefas
 // @description     Dynamic Island built into the Windows 11 taskbar (runs in Explorer, owned by the taskbar window): media controls on the collapsed pill, alerts that open to the right, follows the taskbar, mouse/headset battery tab and low battery alert, settings in Brazilian Portuguese. Fork of Dynamic Island for Windows 1.4.0.
-// @version         2.0.0
+// @version         2.0.1
 // @author          Tiago Palhas (fork of Dynamic Island for Windows by devcode90)
 // @github          https://github.com/TiagoPalhas
 // @homepage        https://github.com/TiagoPalhas/dynamic-island-taskbar
@@ -26,6 +26,10 @@ What this fork changes:
   the taskbar, it goes under fullscreen apps together with the taskbar, and it
   comes back on its own when Explorer restarts or rebuilds the taskbar. No more
   topmost tug-of-war with the taskbar.
+- Hides exactly when the taskbar hides (2.0.1): when a fullscreen app (video, game)
+  covers the island's monitor, the island hides with the taskbar, even while the
+  focus is on another monitor. The mic/camera privacy dot and transient alerts no
+  longer keep it over fullscreen apps. Ctrl+Alt+D still shows it on demand.
 - Docks in the taskbar: anchored to the real taskbar window, vertically centred,
   and slides away with it when the taskbar auto-hides.
 - Stays above the taskbar: a foreground hook re-raises the island the moment the
@@ -4262,7 +4266,38 @@ inline void CALLBACK OnForegroundChanged(HWINEVENTHOOK, DWORD, HWND, LONG, LONG,
 // island, so pills read oldest-to-newest from left to right. Written by the render
 // loop, read by the renderer and the click handler.
 inline std::atomic<bool> g_secondaryOnLeft{false};
+
+// The taskbar window (primary or secondary) that lives on `monitor`, or nullptr.
+inline HWND TaskbarWindowFor(HMONITOR monitor) {
+    if (!monitor) return nullptr;
+    HWND primary = FindWindowW(L"Shell_TrayWnd", nullptr);
+    if (primary && MonitorFromWindow(primary, MONITOR_DEFAULTTONULL) == monitor) return primary;
+    for (HWND w = FindWindowExW(nullptr, nullptr, L"Shell_SecondaryTrayWnd", nullptr); w;
+         w = FindWindowExW(nullptr, w, L"Shell_SecondaryTrayWnd", nullptr)) {
+        if (MonitorFromWindow(w, MONITOR_DEFAULTTONULL) == monitor) return w;
+    }
+    return nullptr;
+}
+
+// Local patch: mirror the taskbar's own fullscreen state instead of guessing from
+// the foreground window. When a fullscreen app (video, game) covers a monitor, the
+// shell drops that monitor's taskbar out of the topmost band so the app covers it,
+// and keeps it there even while focus moves to another monitor. Returns
+// 1 = taskbar lowered (hide the island), 0 = taskbar up, -1 = no taskbar found.
+inline int TaskbarLoweredForFullscreen(HMONITOR monitor) {
+    HWND taskbar = TaskbarWindowFor(monitor);
+    if (!taskbar || !IsWindowVisible(taskbar)) return -1;
+    return (GetWindowLongW(taskbar, GWL_EXSTYLE) & WS_EX_TOPMOST) ? 0 : 1;
+}
 }  // namespace TaskbarDock
+
+// Local patch: fullscreen = "the taskbar on the island's monitor is hidden by a
+// fullscreen app", exactly as the taskbar itself behaves. Falls back to the original
+// foreground check only when that monitor has no taskbar.
+inline bool IslandFullscreenSuppressed(HWND islandHwnd) {
+    const int lowered = TaskbarDock::TaskbarLoweredForFullscreen(GetAnchorMonitor());
+    return lowered >= 0 ? lowered == 1 : IsForegroundFullscreen(islandHwnd);
+}
 
 inline bool UsesFixedStage(const Settings&) {
     return true;
@@ -23906,9 +23941,10 @@ DWORD WINAPI RenderThreadProc(void*) {
                 // Auto-parked, so nothing is animating; same reasoning as above.
                 setHighResTimer(false);
                 if (parkedForFullscreen) {
-                    MsgWaitForMultipleObjects(1, &g_stopEvent, FALSE, 1500, QS_ALLINPUT);
+                    // Local patch: 250ms (was 1.5s) so the island comes back with the taskbar.
+                    MsgWaitForMultipleObjects(1, &g_stopEvent, FALSE, 250, QS_ALLINPUT);
                     const bool stillFullscreen =
-                        g_settings.autoHideFullscreen && IsForegroundFullscreen(hwnd);
+                        g_settings.autoHideFullscreen && IslandFullscreenSuppressed(hwnd);
                     g_isFullscreen.store(stillFullscreen, std::memory_order_relaxed);
                     if (!stillFullscreen) {
                         g_fullscreenOverrideVisible = false;
@@ -24192,8 +24228,8 @@ DWORD WINAPI RenderThreadProc(void*) {
 
         static bool isFullscreen = false;
         static double lastFullscreenCheck = -1.0;  // -1.0 guarantees the very first iteration checks
-        if (now - lastFullscreenCheck > 0.5) {
-            const bool newFullscreen = g_settings.autoHideFullscreen && IsForegroundFullscreen(hwnd);
+        if (now - lastFullscreenCheck > 0.1) {  // Local patch: was 0.5s; hides with the taskbar
+            const bool newFullscreen = g_settings.autoHideFullscreen && IslandFullscreenSuppressed(hwnd);
             if (isFullscreen && !newFullscreen) {
                 // Fullscreen ended — re-arm so the next fullscreen session
                 // hides again even if the hotkey was used to reveal the
@@ -24322,7 +24358,12 @@ DWORD WINAPI RenderThreadProc(void*) {
 
         const bool fullscreenSuppressed =
             isFullscreen && !g_fullscreenOverrideVisible.load(std::memory_order_relaxed);
-        if ((isHidden || fullscreenSuppressed) && !privacyActive && !pinned && !isHoverExpanded && !isTransientAlert) {
+        // Local patch: in fullscreen (videos, games) the privacy dot and transient alerts
+        // no longer keep the island up. Discord holding the mic open made the privacy dot
+        // pin the island over every fullscreen app. Outside fullscreen nothing changes;
+        // in fullscreen only the hotkey override, pin or a click-expand still show it.
+        const bool keepVisibleForStatus = !fullscreenSuppressed && (privacyActive || isTransientAlert);
+        if ((isHidden || fullscreenSuppressed) && !keepVisibleForStatus && !pinned && !isHoverExpanded) {
             primary.width = 0.0f;
             primary.height = 0.0f;
             secondary.reset();
@@ -24700,8 +24741,8 @@ DWORD WINAPI RenderThreadProc(void*) {
         // Only parks once the collapse animation has actually settled at 0,
         // so the shrink still animates before we cut over to OS-hidden.
         const bool wantsAutoHiddenPark =
-            !g_manuallyHidden.load() && !pinned && !isHoverExpanded && !isTransientAlert &&
-            !privacyActive && (isHidden || fullscreenSuppressed) &&
+            !g_manuallyHidden.load() && !pinned && !isHoverExpanded &&
+            !keepVisibleForStatus && (isHidden || fullscreenSuppressed) &&  // Local patch
             widthSpring.value < 0.5f && heightSpring.value < 0.5f &&
             std::fabs(widthSpring.velocity) < 0.5f && std::fabs(heightSpring.velocity) < 0.5f;
 
